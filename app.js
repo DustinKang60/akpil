@@ -90,7 +90,7 @@ const app = {
   mime: '',
   recog: null,
   recogWanted: false,     // 인식이 계속 돌아야 하는 상태인가
-  recogSegs: [],          // 이번 인식 세션: 결과 인덱스 → 해당 문단 (교체용)
+  recogLast: null,        // 마지막 인식 문단 (자라는 발화를 교체로 잇기 위함)
   restartAt: 0,
   restartFails: 0,
   wakeLock: null,
@@ -195,30 +195,51 @@ function appendSeg(seg) {
   box.scrollTop = box.scrollHeight;
 }
 
-// 인식 결과를 문단에 반영한다.
-// 안드로이드 크롬은 하나의 확정 결과를 "자라는 채로"(아 → 아 지금 → …)
-// 같은 인덱스로 매번 다시 보낸다. 그래서 인덱스별로 문단을 하나 잡아두고,
-// 같은 인덱스가 또 오면 새로 붙이지 말고 최신 값으로 "교체"한다.
-// 이러면 표준 브라우저(인덱스마다 다른 발화)와 이 병리 패턴 둘 다 맞는다.
-function commitAt(index, raw) {
+// 공백을 하나로 정규화 (접두사 비교용)
+const norm = (s) => s.replace(/\s+/g, ' ').trim();
+
+// b 가 a 가 자란 것인가? (한쪽이 다른 쪽으로 시작하면 같은 발화가 커지는 중)
+function isGrowth(a, b) {
+  const x = norm(a), y = norm(b);
+  if (!x || !y) return false;
+  return y.startsWith(x) || x.startsWith(y);
+}
+
+// 인식 결과 하나를 문단에 반영한다.
+//
+// 이 기기(안드로이드 크롬)는 하나의 발화를 "자라는 채로"
+// (음 서울에 한 → 음 서울에 한 사립대학교 → …) 확정 결과로 여러 번 보내고,
+// 인식을 자주 끊었다 재시작하며 그때마다 결과 인덱스를 0 으로 되돌린다.
+// 그래서 인덱스로는 같은 발화를 못 묶는다.
+//
+// 대신 내용을 본다: 방금 온 문장이 마지막 문단이 "자란 것"이면(접두사 관계)
+// 새로 붙이지 말고 그 문단을 최신 값으로 교체한다. 화자가 바뀌었거나,
+// 사용자가 중요·할일로 표시한 문단이면 건드리지 않고 새 문단으로 시작한다.
+function ingestFinal(raw) {
   const text = fixTerms(raw);
   const box = $('#transcript');
-  const seg = app.recogSegs[index];
+  const last = app.recogLast;
+  const canGrow = last && last.speaker === app.speaker && !last.mark
+    && isGrowth(last.rawText, raw);
 
-  if (seg) {
-    seg.text = text;
-    seg.lastAt = elapsedMs();
-    const body = box.querySelector(`.seg[data-id="${seg.id}"] .seg-body`);
-    if (body) body.textContent = text;
-    else renderTranscript();
-    box.scrollTop = box.scrollHeight;
+  if (canGrow) {
+    // 더 긴 쪽을 남긴다 (드물게 짧아진 결과가 와도 내용이 사라지지 않게)
+    if (norm(raw).length >= norm(last.rawText).length) {
+      last.rawText = raw;
+      last.text = text;
+      last.lastAt = elapsedMs();
+      const body = box.querySelector(`.seg[data-id="${last.id}"] .seg-body`);
+      if (body) body.textContent = text;
+      else renderTranscript();
+      box.scrollTop = box.scrollHeight;
+    }
   } else {
     const s = {
       id: 's' + Date.now() + Math.random().toString(36).slice(2, 6),
-      t: elapsedMs(), lastAt: elapsedMs(), speaker: app.speaker, text, mark: null,
+      t: elapsedMs(), lastAt: elapsedMs(), speaker: app.speaker, text, rawText: raw, mark: null,
     };
     app.segments.push(s);
-    app.recogSegs[index] = s;
+    app.recogLast = s;
     appendSeg(s);
   }
   saveDraft();
@@ -260,9 +281,11 @@ function makeRecognizer() {
   r.interimResults = true;
   r.maxAlternatives = 1;
 
-  // 새 인식 세션이 시작되면 인덱스→문단 매핑을 비운다.
-  // 이후 결과 인덱스는 이번 세션 기준으로 0 부터 다시 센다.
-  r.onstart = () => { app.recogSegs = []; };
+  // 세션마다 결과 목록은 0 부터 다시 쌓인다. 같은 세션 안에서 같은 확정
+  // 결과를 중복 처리하지 않도록, 인덱스별로 마지막에 본 확정 텍스트를 기억한다.
+  // 재시작해도 app.recogLast 는 살아 있어, 이어지는 발화는 내용으로 묶인다.
+  let seenFinal = [];
+  r.onstart = () => { seenFinal = []; };
 
   r.onresult = (e) => {
     let interim = '';
@@ -270,8 +293,14 @@ function makeRecognizer() {
       const res = e.results[i];
       const txt = (res[0] && res[0].transcript || '').trim();
       if (!txt) continue;
-      if (res.isFinal) commitAt(i, txt);      // 그 자리 문단을 만들거나 최신 값으로 교체
-      else interim += txt + ' ';              // 아직 확정 전 → 미리보기 줄에만
+      if (res.isFinal) {
+        if (seenFinal[i] !== txt) {           // 이 자리 확정이 처음이거나 자랐을 때만
+          seenFinal[i] = txt;
+          ingestFinal(txt);
+        }
+      } else {
+        interim += txt + ' ';                 // 아직 확정 전 → 미리보기 줄에만
+      }
     }
     const el = $('#interim');
     if (el) {
@@ -397,7 +426,7 @@ async function begin() {
   // 아이폰은 사용자가 손가락을 뗀 직후에만 인식을 켤 수 있다 → 제일 먼저 켠다.
   app.recogWanted = true;
   app.restartFails = 0;
-  app.recogSegs = [];
+  app.recogLast = null;
   try { app.recog.start(); } catch { /* 이미 켜져 있으면 무시 */ }
 
   app.startedAt = Date.now();
@@ -424,7 +453,7 @@ function resume() {
   app.startedAt = Date.now();
   app.recogWanted = true;
   app.restartFails = 0;
-  app.recogSegs = [];
+  app.recogLast = null;
   try { app.recog.start(); } catch {}
   if (app.recorder && app.recorder.state === 'paused') app.recorder.resume();
   else if (!app.recorder && SET.record) startRecorder();

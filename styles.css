@@ -137,7 +137,8 @@ body.is-paused .status-text{color:var(--amber)}
   outline:none;background:var(--surface-2);border-radius:6px;
   padding:6px 8px;margin:-6px -8px;
 }
-.seg-body:empty::before{content:"(빈 문단)";color:var(--text-3)}
+/* 편집 중 빈 문단 안내. 인식 미리보기(#interim)는 비어도 아무것도 안 띄운다 */
+.seg-body[contenteditable="true"]:empty::before{content:"(빈 문단)";color:var(--text-3)}
 
 #interim{color:var(--text-3);font-style:italic}
 
