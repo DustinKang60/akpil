@@ -3,7 +3,7 @@
    에셋을 고치면 아래 CACHE 버전을 반드시 올릴 것.
    올리지 않으면 기기는 저장된 옛 코드를 계속 쓴다.
    ───────────────────────────────────────────────────────── */
-const CACHE = 'akpil-v5';
+const CACHE = 'akpil-v6';
 
 const ASSETS = [
   './',
@@ -11,6 +11,8 @@ const ASSETS = [
   './styles.css',
   './app.js',
   './manifest.json',
+  './icons/favicon-32.png',
+  './icons/icon-180.png',
   './icons/icon-192.png',
   './icons/icon-512.png',
 ];

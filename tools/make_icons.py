@@ -56,6 +56,30 @@ save(normal, 512, "icon-512.png")
 save(normal, 180, "icon-180.png")   # 아이폰 홈화면
 save(normal, 32, "favicon-32.png")
 
-# 마스커블: 안드로이드가 가장자리를 잘라내므로 안전 영역(중앙 80%) 안에 그린다
-save(draw_mic(0.30), 512, "icon-maskable-512.png")
+# 마스커블: 안드로이드가 가장자리를 잘라낸다. 확실히 보이는 곳은
+# 지름 80% 짜리 원 안쪽 — 즉 중심에서 반지름 0.40 안에 다 들어와야 한다.
+# 여백을 넉넉히 주면 안전하긴 한데 마이크가 우표만 해진다. 실측해서 맞춘다.
+SAFE = 0.38  # 0.40 에 살짝 여유
+
+
+def max_radius(img):
+    """중심에서 잉크까지의 최대 거리 (아이콘 크기 대비 비율)."""
+    px = img.convert("RGB").point(lambda v: 255 if v > 60 else 0).convert("L")
+    x0, y0, x1, y1 = px.getbbox()
+    c = img.width / 2
+    dx = max(c - x0, x1 - c)
+    dy = max(c - y0, y1 - c)
+    return (dx ** 2 + dy ** 2) ** 0.5 / img.width
+
+
+pad = 0.20
+for _ in range(6):  # 몇 번만 돌려도 충분히 수렴한다
+    got = max_radius(draw_mic(pad))
+    if abs(got - SAFE) < 0.004:
+        break
+    pad += (got - SAFE) * 0.9
+
+mask = draw_mic(pad)
+save(mask, 512, "icon-maskable-512.png")
+print(f"  (마스커블 여백 {pad:.3f} → 최대 반지름 {max_radius(mask):.3f}, 한계 0.40)")
 print("완료")
