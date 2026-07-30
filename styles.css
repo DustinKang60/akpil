@@ -94,6 +94,22 @@ input{font:inherit}
 .elapsed{color:var(--text-2);font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
 .status-right{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--neon)}
 
+/* 마이크 입력 음량 — 소리가 들어오고 있는지 그 자리에서 보이게.
+   오른쪽 "화면 유지"와 부딪히지 않도록 40px 로 짧게 잡는다. */
+.level{
+  width:40px;height:6px;flex:none;
+  background:var(--line-2);border-radius:3px;overflow:hidden;
+}
+.level i{
+  display:block;height:100%;width:0;
+  background:var(--neon);border-radius:3px;
+  transition:width .08s linear;
+}
+/* 3초 넘게 소리가 안 들어오면 빨갛게 깜빡인다 */
+.level.is-silent{background:#4A1520}
+.level.is-silent i{background:var(--rec);width:100% !important;animation:pulse 1s ease-in-out infinite}
+@media (prefers-reduced-motion:reduce){.level.is-silent i{animation:none}}
+
 body.is-rec .dot{background:var(--rec);animation:pulse 1.6s ease-in-out infinite}
 body.is-rec .status-text{color:var(--rec)}
 body.is-paused .dot{background:var(--amber)}

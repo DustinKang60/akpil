@@ -443,6 +443,7 @@ async function startRecorder() {
     app.chunks = [];
     app.recorder.ondataavailable = (e) => { if (e.data && e.data.size) app.chunks.push(e.data); };
     app.recorder.start(4000);
+    startMeter(app.stream);
     return true;
   } catch (err) {
     app.recorder = null;
@@ -450,6 +451,60 @@ async function startRecorder() {
     console.warn('recorder off:', err);
     return false;
   }
+}
+
+/* ─────────── 입력 음량 표시 ─────────── */
+// 녹음이 무음인 것을 회의가 끝난 뒤에야 아는 일이 없도록, 그 자리에서 보여준다.
+// 실제로 블루투스 시계가 마이크를 가로챈 것을 몇 시간 뒤에야 알아챘다.
+let meterCtx = null, meterTimer = null, quietSince = 0, quietToldAt = 0;
+
+function startMeter(stream) {
+  stopMeter();
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC || !stream) return;
+  try {
+    meterCtx = new AC();
+    const an = meterCtx.createAnalyser();
+    an.fftSize = 1024;
+    meterCtx.createMediaStreamSource(stream).connect(an);
+    const buf = new Float32Array(an.fftSize);
+    const bar = $('#level'), fill = $('#level-fill');
+    bar.hidden = false;
+    $('#level-sep').hidden = false;
+    quietSince = Date.now();
+    quietToldAt = 0;
+    meterTimer = setInterval(() => {
+      an.getFloatTimeDomainData(buf);
+      let peak = 0;
+      for (let i = 0; i < buf.length; i++) {
+        const v = Math.abs(buf[i]);
+        if (v > peak) peak = v;
+      }
+      // 진폭을 dB 로 바꿔 -60dB~0dB 를 0~100% 로 편다. 사람 귀에 맞는 눈금이다.
+      const db = peak > 0 ? 20 * Math.log10(peak) : -99;
+      fill.style.width = Math.max(0, Math.min(100, (db + 60) / 60 * 100)) + '%';
+
+      if (peak >= MIC_SILENT) quietSince = Date.now();
+      const quiet = Date.now() - quietSince > 3000;   // 3초 넘게 무음이면 경고
+      bar.classList.toggle('is-silent', quiet);
+      if (quiet && Date.now() - quietToldAt > 60000) {   // 잔소리는 1분에 한 번만
+        quietToldAt = Date.now();
+        toast('마이크에 소리가 안 들어옵니다. 블루투스 이어폰·시계의 통화 오디오를 꺼 주세요.', 5000);
+      }
+    }, 100);
+  } catch { stopMeter(); }
+}
+
+function stopMeter() {
+  clearInterval(meterTimer);
+  meterTimer = null;
+  if (meterCtx) { try { meterCtx.close(); } catch {} meterCtx = null; }
+  const bar = $('#level');
+  if (!bar) return;
+  bar.hidden = true;
+  bar.classList.remove('is-silent');
+  $('#level-sep').hidden = true;
+  $('#level-fill').style.width = '0';
 }
 
 function stopRecorder() {
@@ -537,6 +592,7 @@ function pause() {
   app.recogWanted = false;
   try { app.recog.stop(); } catch {}
   if (app.recorder && app.recorder.state === 'recording') app.recorder.pause();
+  stopMeter();
   releaseWakeLock();
   setState('paused');
 }
@@ -548,7 +604,7 @@ function resume() {
   app.startedAt = Date.now();
   // 일시정지 중에도 마이크 스트림은 살아 있으므로 재개는 순서를 따질 필요가 없다.
   startRecognition();
-  if (app.recorder && app.recorder.state === 'paused') app.recorder.resume();
+  if (app.recorder && app.recorder.state === 'paused') { app.recorder.resume(); startMeter(app.stream); }
   else if (!app.recorder && SET.record) startRecorder();
   setState('rec');
   acquireWakeLock();
@@ -560,6 +616,7 @@ async function finish() {
   try { app.recog && app.recog.stop(); } catch {}
   clearInterval(app.tick);
   releaseWakeLock();
+  stopMeter();
 
   const blob = await stopRecorder();
   if (app.stream) { app.stream.getTracks().forEach((t) => t.stop()); app.stream = null; }
