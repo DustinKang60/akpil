@@ -584,9 +584,11 @@ function asText(rec) {
     return `${badge}[${clock(s.t)}]${who}\n${s.text}`;
   });
 
-  const out = [head.join('\n'), '─'.repeat(20), body.join('\n\n')];
+  // 가로 구분선(─)은 카톡·메일에서 폭을 못 채워 줄이 깨져 지저분하다.
+  // 빈 줄과 소제목(■)만으로 구분한다.
+  const out = [head.join('\n'), body.join('\n\n')];
   if (marks.length) {
-    out.push('─'.repeat(20), '■ 중요 · 할일',
+    out.push('■ 중요 · 할일',
       marks.map((s) => `${s.mark === 'todo' ? '☑' : '★'} [${clock(s.t)}] ${s.text}`).join('\n'));
   }
   out.push('— 악필 · 작은앱공방');
