@@ -364,13 +364,80 @@ function pickMime() {
   return list.find((m) => MediaRecorder.isTypeSupported(m)) || '';
 }
 
+// 통화용 보정을 모두 끈다. 이 셋은 "코앞의 한 사람 목소리"에 맞춘 것이라,
+// 회의실에서 2~3m 떨어진 말소리를 잡음으로 보고 깎아낸다. 원본을 그대로 받는다.
+const MIC_BASE = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+
+// 이 값보다 작으면 마이크가 소리를 안 보내는 것으로 본다.
+// 살아 있는 마이크는 조용한 방에서도 이보다 큰 잡음 바닥을 가진다.
+// 실측: 블루투스 시계가 마이크를 가로챘을 때 최대 진폭이 0.0001 이었다.
+const MIC_SILENT = 0.0005;
+
+// 스트림에 실제로 소리가 들어오는지 잠깐 재본다. 최대 진폭을 돌려준다.
+async function micPeak(stream, ms = 600) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return 1;                       // 잴 수 없으면 통과시킨다
+  const ac = new AC();
+  try {
+    const an = ac.createAnalyser();
+    an.fftSize = 1024;
+    ac.createMediaStreamSource(stream).connect(an);
+    const buf = new Float32Array(an.fftSize);
+    let peak = 0;
+    const until = Date.now() + ms;
+    while (Date.now() < until) {
+      an.getFloatTimeDomainData(buf);
+      for (let i = 0; i < buf.length; i++) {
+        const v = Math.abs(buf[i]);
+        if (v > peak) peak = v;
+      }
+      await new Promise((r) => setTimeout(r, 40));
+    }
+    return peak;
+  } catch { return 1; } finally { try { ac.close(); } catch {} }
+}
+
+// 소리가 들어오는 마이크를 골라 연다.
+//
+// 블루투스 이어폰이나 스마트워치가 붙어 있으면 안드로이드는 "기본 마이크"로
+// 그쪽을 내준다. 손목의 시계 마이크는 회의실 소리를 거의 담지 못해서, 앱은
+// 정상으로 보이는데 녹음만 통째로 무음이 된다. 실제로 그것 때문에 하루를 날렸다.
+//
+// 라벨 이름으로 짐작하지 않는다. 기기마다 이름이 제각각이라 믿을 수 없다.
+// 열어서 소리를 재보고, 무음이면 다음 입력 장치로 옮긴다.
+async function openMic() {
+  let stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_BASE });
+  app.micLabel = (stream.getAudioTracks()[0] || {}).label || '기본 마이크';
+  if (await micPeak(stream) >= MIC_SILENT) return stream;
+
+  let devs = [];
+  try {
+    devs = (await navigator.mediaDevices.enumerateDevices())
+      .filter((d) => d.kind === 'audioinput' && d.deviceId
+                     && d.deviceId !== 'default' && d.deviceId !== 'communications');
+  } catch { /* 목록을 못 얻으면 그냥 기본 마이크로 간다 */ }
+
+  for (const d of devs) {
+    stream.getTracks().forEach((t) => t.stop());
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: { ...MIC_BASE, deviceId: { exact: d.deviceId } },
+      });
+    } catch { continue; }
+    if (await micPeak(stream) >= MIC_SILENT) {
+      app.micLabel = d.label || '다른 마이크';
+      toast(`마이크를 "${app.micLabel}" 로 바꿨습니다.`, 3500);
+      return stream;
+    }
+  }
+
+  toast('마이크에서 소리가 들어오지 않습니다. 블루투스 이어폰·시계의 통화 오디오를 꺼 주세요.', 6000);
+  return stream;                            // 그래도 녹음은 시도한다
+}
+
 async function startRecorder() {
   try {
-    // 통화용 보정을 모두 끈다. 이 셋은 "코앞의 한 사람 목소리"에 맞춘 것이라,
-    // 회의실에서 2~3m 떨어진 말소리를 잡음으로 보고 깎아낸다. 원본을 그대로 받는다.
-    app.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-    });
+    app.stream = await openMic();
     app.mime = pickMime();
     app.recorder = new MediaRecorder(app.stream, app.mime ? { mimeType: app.mime } : undefined);
     app.chunks = [];
