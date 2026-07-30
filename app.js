@@ -397,18 +397,36 @@ async function micPeak(stream, ms = 600) {
   } catch { return 1; } finally { try { ac.close(); } catch {} }
 }
 
+// getUserMedia 는 응답을 아예 안 주고 멎을 수 있다.
+//
+// 브라우저 음성 인식이 마이크를 쥐고 있을 때 안드로이드에서 실제로 그랬다.
+// 거부(reject)도 아니라 catch 가 안 걸리고, 그 뒤 줄이 통째로 실행되지 않아
+// 녹음도 음량 막대도 조용히 사라졌다. 오류 한 줄 안 남아서 한참을 헤맸다.
+// 그래서 시간을 재고, 넘으면 실패로 만들어 눈에 보이게 한다.
+function gumWithTimeout(constraints, ms = 5000) {
+  return Promise.race([
+    navigator.mediaDevices.getUserMedia(constraints),
+    new Promise((_, rej) => setTimeout(
+      () => rej(new Error('마이크가 응답하지 않습니다 (' + ms + 'ms 초과)')), ms)),
+  ]);
+}
+
 // 소리가 들어오는 마이크를 골라 연다.
 //
 // 블루투스 이어폰이나 스마트워치가 붙어 있으면 안드로이드는 "기본 마이크"로
 // 그쪽을 내준다. 손목의 시계 마이크는 회의실 소리를 거의 담지 못해서, 앱은
 // 정상으로 보이는데 녹음만 통째로 무음이 된다. 실제로 그것 때문에 하루를 날렸다.
 //
-// 라벨 이름으로 짐작하지 않는다. 기기마다 이름이 제각각이라 믿을 수 없다.
-// 열어서 소리를 재보고, 무음이면 다음 입력 장치로 옮긴다.
+// 다만 성급히 갈아타면 안 된다. 회의 시작 순간은 원래 조용하다. 조용하다는
+// 이유만으로 옮기면 엉뚱한 입력(스피커폰 등)을 잡는다. 그래서 다른 장치가
+// 기본보다 세 배 넘게 크게 들릴 때만 바꾸고, 아니면 기본으로 돌아온다.
+// 그래도 조용하면 바꾸지 않고, 녹음 중 음량 막대가 계속 알려준다.
 async function openMic() {
-  let stream = await navigator.mediaDevices.getUserMedia({ audio: MIC_BASE });
-  app.micLabel = (stream.getAudioTracks()[0] || {}).label || '기본 마이크';
-  if (await micPeak(stream) >= MIC_SILENT) return stream;
+  const first = await gumWithTimeout({ audio: MIC_BASE });
+  const firstPeak = await micPeak(first, 400);
+  let best = first, bestPeak = firstPeak;
+  app.micLabel = (first.getAudioTracks()[0] || {}).label || '기본 마이크';
+  if (firstPeak >= MIC_SILENT) return first;
 
   let devs = [];
   try {
@@ -418,21 +436,29 @@ async function openMic() {
   } catch { /* 목록을 못 얻으면 그냥 기본 마이크로 간다 */ }
 
   for (const d of devs) {
-    stream.getTracks().forEach((t) => t.stop());
+    let s;
     try {
-      stream = await navigator.mediaDevices.getUserMedia({
-        audio: { ...MIC_BASE, deviceId: { exact: d.deviceId } },
-      });
+      s = await gumWithTimeout({ audio: { ...MIC_BASE, deviceId: { exact: d.deviceId } } }, 3000);
     } catch { continue; }
-    if (await micPeak(stream) >= MIC_SILENT) {
+    const p = await micPeak(s, 400);
+    if (p >= MIC_SILENT && p > bestPeak * 3) {
+      if (best !== first) best.getTracks().forEach((t) => t.stop());
+      best = s; bestPeak = p;
       app.micLabel = d.label || '다른 마이크';
-      toast(`마이크를 "${app.micLabel}" 로 바꿨습니다.`, 3500);
-      return stream;
+    } else {
+      s.getTracks().forEach((t) => t.stop());
     }
   }
 
-  toast('마이크에서 소리가 들어오지 않습니다. 블루투스 이어폰·시계의 통화 오디오를 꺼 주세요.', 6000);
-  return stream;                            // 그래도 녹음은 시도한다
+  if (best !== first) {
+    first.getTracks().forEach((t) => t.stop());
+    toast(`마이크를 "${app.micLabel}" 로 바꿨습니다.`, 3500);
+    return best;
+  }
+
+  // 어느 것도 뚜렷하지 않다 — 방이 조용한 것일 수도 있으니 기본 마이크로 간다.
+  // 정말 무음이면 녹음 중 음량 막대가 3초 뒤부터 빨갛게 알려준다.
+  return first;
 }
 
 async function startRecorder() {
@@ -447,7 +473,7 @@ async function startRecorder() {
     return true;
   } catch (err) {
     app.recorder = null;
-    toast('녹음은 못 하지만 받아쓰기는 계속됩니다.', 3500);
+    toast('녹음을 켜지 못했습니다 — ' + (err && err.message || err) + ' 받아쓰기는 계속됩니다.', 6000);
     console.warn('recorder off:', err);
     return false;
   }
@@ -520,6 +546,105 @@ function stopRecorder() {
   });
 }
 
+/* ─────────── 딥그램 받아쓰기 (주 엔진) ─────────── */
+// 브라우저 음성 인식(Web Speech)은 마이크를 통째로 가져간다. 그래서 녹음과
+// 동시에 쓸 수 없다. 안드로이드에서는 인식이 켜져 있으면 getUserMedia 가
+// 거부되거나 아예 응답을 안 준다. 측정으로 확인했다.
+//
+// 딥그램은 다르다. 우리가 연 마이크의 소리를 보내주면 글로 돌려준다.
+// 마이크를 여는 쪽이 하나뿐이라 다툴 상대가 없고, 그래서 녹음과 받아쓰기가
+// 같이 된다. 같은 MediaRecorder 조각을 저장용과 전송용으로 함께 쓴다.
+//
+// 키는 이 기기에만 둔다. 저장소에도 서버에도 올라가지 않는다.
+const DG_URL = 'wss://api.deepgram.com/v1/listen';
+const dgKey = () => (localStorage.getItem('akpil.dgkey') || '').trim();
+
+function dgQuery() {
+  return new URLSearchParams({
+    model: 'nova-3', language: 'ko',
+    smart_format: 'true', punctuate: 'true', interim_results: 'true',
+  }).toString();
+}
+
+async function startDeepgram() {
+  try {
+    app.stream = await openMic();
+  } catch (err) {
+    toast('마이크를 열지 못했습니다 — ' + (err && err.message || err), 6000);
+    console.warn('mic:', err);
+    return false;
+  }
+
+  return new Promise((res) => {
+    let done = false;
+    const settle = (v) => { if (!done) { done = true; res(v); } };
+
+    let ws;
+    try { ws = new WebSocket(DG_URL + '?' + dgQuery(), ['token', dgKey()]); }
+    catch (err) { console.warn('dg:', err); return settle(false); }
+    app.dg = ws;
+    app.dgWanted = true;
+
+    const giveUp = setTimeout(() => settle(false), 7000);   // 7초 안에 안 열리면 포기
+
+    ws.onopen = () => {
+      clearTimeout(giveUp);
+      app.mime = pickMime();
+      app.recorder = new MediaRecorder(app.stream, app.mime ? { mimeType: app.mime } : undefined);
+      app.chunks = [];
+      app.recorder.ondataavailable = (e) => {
+        if (!e.data || !e.data.size) return;
+        if (SET.record) app.chunks.push(e.data);                 // 저장은 설정에 따라
+        if (ws.readyState === WebSocket.OPEN) ws.send(e.data);   // 받아쓰기는 늘 보낸다
+      };
+      app.recorder.start(250);        // 자주 흘려야 글이 빨리 올라온다
+      // 말이 없어도 연결이 끊기지 않게 붙잡아 둔다 (일시정지 중에도).
+      app.dgAlive = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'KeepAlive' }));
+      }, 5000);
+      startMeter(app.stream);
+      settle(true);
+    };
+
+    ws.onmessage = (ev) => {
+      let m;
+      try { m = JSON.parse(ev.data); } catch { return; }
+      if (m.type !== 'Results') return;
+      const alt = m.channel && m.channel.alternatives && m.channel.alternatives[0];
+      const txt = ((alt && alt.transcript) || '').trim();
+      const el = $('#interim');
+      if (!txt) { if (el) el.textContent = ''; return; }
+      if (m.is_final) {
+        if (el) el.textContent = '';
+        ingestFinal(txt);
+      } else if (el) {
+        el.textContent = txt;
+        $('#transcript').scrollTop = $('#transcript').scrollHeight;
+      }
+    };
+
+    ws.onerror = () => settle(false);
+    ws.onclose = (e) => {
+      settle(false);
+      if (app.dgWanted && e.code !== 1000) {
+        toast('받아쓰기 연결이 끊겼습니다. 인터넷을 확인해 주세요.', 5000);
+      }
+    };
+  });
+}
+
+function stopDeepgram() {
+  app.dgWanted = false;
+  clearInterval(app.dgAlive);
+  app.dgAlive = null;
+  if (!app.dg) return;
+  try {
+    if (app.dg.readyState === WebSocket.OPEN) app.dg.send(JSON.stringify({ type: 'CloseStream' }));
+  } catch { /* 이미 닫혔으면 그만 */ }
+  try { app.dg.close(1000); } catch {}
+  app.dg = null;
+}
+
 /* ─────────── 화면 꺼짐 방지 ─────────── */
 async function acquireWakeLock() {
   if (!('wakeLock' in navigator)) return;
@@ -565,10 +690,29 @@ function startTick() {
 }
 
 async function begin() {
+  app.startedAt = Date.now();
+  setState('rec');
+  startTick();
+  renderTranscript();
+  acquireWakeLock();
+
+  // 딥그램 키가 있으면 그쪽이 주 엔진이다. 마이크를 한 번만 열어 녹음과
+  // 받아쓰기를 함께 한다. 키가 없거나 연결이 안 되면 기존 방식으로 내려간다.
+  if (dgKey()) {
+    if (await startDeepgram()) { app.engine = 'dg'; return; }
+    stopDeepgram();
+    if (app.stream) { app.stream.getTracks().forEach((t) => t.stop()); app.stream = null; }
+    toast('딥그램에 연결하지 못했습니다. 기존 받아쓰기로 진행합니다.', 5000);
+  }
+
+  app.engine = 'web';
   if (!app.recog) {
     app.recog = makeRecognizer();
     if (!app.recog) {
       toast('이 브라우저는 음성 인식을 지원하지 않습니다. 크롬이나 사파리로 열어 주세요.', 5000);
+      clearInterval(app.tick);
+      releaseWakeLock();
+      setState('idle');
       return;
     }
   }
@@ -578,12 +722,6 @@ async function begin() {
   // 즉 이 순서라야 "녹음이냐 받아쓰기냐"를 사용자가 고를 수 있다.
   // 아이폰은 사용자가 손가락을 뗀 직후에만 인식을 켤 수 있다 → 어차피 인식이 먼저다.
   startRecognition();
-
-  app.startedAt = Date.now();
-  setState('rec');
-  startTick();
-  renderTranscript();
-  acquireWakeLock();
   if (SET.record) await startRecorder();   // 설정에서 끄면 받아쓰기만 한다
 }
 
@@ -598,14 +736,19 @@ function pause() {
 }
 
 function resume() {
-  if (!app.recog) app.recog = makeRecognizer();   // 초안을 되살린 직후엔 아직 없다
-  if (!app.recog) return toast('이 브라우저는 음성 인식을 지원하지 않습니다.', 4000);
-
   app.startedAt = Date.now();
-  // 일시정지 중에도 마이크 스트림은 살아 있으므로 재개는 순서를 따질 필요가 없다.
-  startRecognition();
-  if (app.recorder && app.recorder.state === 'paused') { app.recorder.resume(); startMeter(app.stream); }
-  else if (!app.recorder && SET.record) startRecorder();
+
+  if (app.engine === 'dg') {
+    // 딥그램은 연결을 KeepAlive 로 붙잡아 뒀다. 조각만 다시 흘려보내면 된다.
+    if (app.recorder && app.recorder.state === 'paused') { app.recorder.resume(); startMeter(app.stream); }
+  } else {
+    if (!app.recog) app.recog = makeRecognizer();   // 초안을 되살린 직후엔 아직 없다
+    if (!app.recog) return toast('이 브라우저는 음성 인식을 지원하지 않습니다.', 4000);
+    // 일시정지 중에도 마이크 스트림은 살아 있으므로 재개는 순서를 따질 필요가 없다.
+    startRecognition();
+    if (app.recorder && app.recorder.state === 'paused') { app.recorder.resume(); startMeter(app.stream); }
+    else if (!app.recorder && SET.record) startRecorder();
+  }
   setState('rec');
   acquireWakeLock();
 }
@@ -614,6 +757,7 @@ async function finish() {
   app.accrued = elapsedMs();
   app.recogWanted = false;
   try { app.recog && app.recog.stop(); } catch {}
+  stopDeepgram();
   clearInterval(app.tick);
   releaseWakeLock();
   stopMeter();
@@ -1034,6 +1178,8 @@ function renderDict() {
 
 function openSet() {
   const sw = (el, on) => el.setAttribute('aria-checked', on ? 'true' : 'false');
+  $('#set-dgkey').value = dgKey();
+  renderDgState();
   sw($('#set-record'), SET.record);
   sw($('#set-chips'), SET.chips);
   $('#set-gap').value = String(SET.gap);
@@ -1066,6 +1212,33 @@ $('#btn-set').addEventListener('click', () => {
   openSet();
 });
 $('#btn-set-back').addEventListener('click', () => showScreen('screen-rec'));
+
+// ── 딥그램 키 ──
+// SET(akpil.set) 과 따로 둔다. 설정은 나중에 내보내거나 옮길 수 있는 값이고,
+// 키는 이 기기 밖으로 나가면 안 되는 값이라 섞지 않는다.
+function renderDgState() {
+  const k = dgKey();
+  const el = $('#dgkey-state');
+  if (!el) return;
+  el.textContent = k
+    ? `넣었습니다 (${k.length}자) — 녹음과 받아쓰기가 함께 됩니다`
+    : '넣지 않음 — 브라우저 받아쓰기로 동작합니다 (녹음과 동시 사용 불가)';
+}
+
+$('#set-dgkey').addEventListener('change', (e) => {
+  const k = e.target.value.trim();
+  if (k) localStorage.setItem('akpil.dgkey', k);
+  else localStorage.removeItem('akpil.dgkey');
+  renderDgState();
+  toast(k ? '딥그램 키를 이 폰에 저장했습니다.' : '딥그램 키를 지웠습니다.', 3000);
+});
+
+$('#dgkey-clear').addEventListener('click', () => {
+  localStorage.removeItem('akpil.dgkey');
+  $('#set-dgkey').value = '';
+  renderDgState();
+  toast('딥그램 키를 지웠습니다.', 3000);
+});
 
 const toggle = (sel, key, after) => {
   $(sel).addEventListener('click', () => {
