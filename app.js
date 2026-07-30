@@ -205,38 +205,56 @@ function isGrowth(a, b) {
   return y.startsWith(x) || x.startsWith(y);
 }
 
+// 문단의 표시 텍스트를 다시 만든다.
+//   committed = 이 문단에서 이미 끝난 발화들을 이어붙인 것
+//   active    = 지금 자라고 있는 마지막 발화
+// 화면·저장에는 (committed + active) 에 용어 교정을 입힌 것을 쓴다.
+function refreshSeg(seg) {
+  const raw = norm(`${seg.committed} ${seg.active}`);
+  seg.text = fixTerms(raw);
+  const body = $('#transcript').querySelector(`.seg[data-id="${seg.id}"] .seg-body`);
+  if (body) body.textContent = seg.text;
+  else renderTranscript();
+}
+
 // 인식 결과 하나를 문단에 반영한다.
 //
 // 이 기기(안드로이드 크롬)는 하나의 발화를 "자라는 채로"
 // (음 서울에 한 → 음 서울에 한 사립대학교 → …) 확정 결과로 여러 번 보내고,
 // 인식을 자주 끊었다 재시작하며 그때마다 결과 인덱스를 0 으로 되돌린다.
-// 그래서 인덱스로는 같은 발화를 못 묶는다.
+// 그래서 인덱스로는 같은 발화를 못 묶는다. 대신 내용으로 판정한다.
 //
-// 대신 내용을 본다: 방금 온 문장이 마지막 문단이 "자란 것"이면(접두사 관계)
-// 새로 붙이지 말고 그 문단을 최신 값으로 교체한다. 화자가 바뀌었거나,
-// 사용자가 중요·할일로 표시한 문단이면 건드리지 않고 새 문단으로 시작한다.
+// 회의록은 매 구절마다 새 줄로 쪼개면 읽기 어렵다. 그래서 같은 화자가
+// 말하는 동안은 한 문단에 계속 이어 붙이고, 다음 셋 중 하나면 새 문단으로 끊는다.
+//   - 화자가 바뀜 (화자 칩 탭)
+//   - 앞 문단을 중요·할일로 표시함
+//   - 같은 화자라도 SET.gap 초 넘게 말이 끊김 (한 문단이 끝없이 길어지는 것 방지)
+// 이어 붙일 때, 방금 온 문장이 진행 중 발화가 자란 것(접두사)이면 active 를
+// 교체하고, 새로운 발화면 이전 active 를 committed 로 넘긴 뒤 이어 붙인다.
 function ingestFinal(raw) {
-  const text = fixTerms(raw);
-  const box = $('#transcript');
   const last = app.recogLast;
-  const canGrow = last && last.speaker === app.speaker && !last.mark
-    && isGrowth(last.rawText, raw);
+  const sameSpeaker = last && last.speaker === app.speaker && !last.mark;
+  const grew = sameSpeaker && isGrowth(last.active, raw);
+  // 자라는 발화는 거의 즉시 연속이므로 시간과 무관하게 이어간다.
+  // 침묵 판정은 "새 발화"에만 적용한다.
+  const within = sameSpeaker && (elapsedMs() - last.lastAt) < SET.gap * 1000;
 
-  if (canGrow) {
-    // 더 긴 쪽을 남긴다 (드물게 짧아진 결과가 와도 내용이 사라지지 않게)
-    if (norm(raw).length >= norm(last.rawText).length) {
-      last.rawText = raw;
-      last.text = text;
-      last.lastAt = elapsedMs();
-      const body = box.querySelector(`.seg[data-id="${last.id}"] .seg-body`);
-      if (body) body.textContent = text;
-      else renderTranscript();
-      box.scrollTop = box.scrollHeight;
-    }
+  if (grew) {
+    if (norm(raw).length >= norm(last.active).length) last.active = raw;   // 더 긴 쪽으로 교체
+    last.lastAt = elapsedMs();
+    refreshSeg(last);
+    $('#transcript').scrollTop = $('#transcript').scrollHeight;
+  } else if (sameSpeaker && within) {
+    last.committed = norm(`${last.committed} ${last.active}`);             // 진행 발화 확정분으로 편입
+    last.active = raw;
+    last.lastAt = elapsedMs();
+    refreshSeg(last);
+    $('#transcript').scrollTop = $('#transcript').scrollHeight;
   } else {
     const s = {
       id: 's' + Date.now() + Math.random().toString(36).slice(2, 6),
-      t: elapsedMs(), lastAt: elapsedMs(), speaker: app.speaker, text, rawText: raw, mark: null,
+      t: elapsedMs(), lastAt: elapsedMs(), speaker: app.speaker,
+      committed: '', active: raw, text: fixTerms(raw), mark: null,
     };
     app.segments.push(s);
     app.recogLast = s;
