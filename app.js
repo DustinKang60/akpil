@@ -745,12 +745,11 @@ $('#btn-copy').addEventListener('click', async () => {
   }
 });
 
-$('#btn-share').addEventListener('click', async () => {
-  await patchCurrent();
+// 회의록 텍스트 공유
+async function shareText() {
   const rec = app.current;
   const text = asText(rec);
   const title = rec.title || '회의록';
-
   if (!navigator.share) {
     await navigator.clipboard.writeText(text).catch(() => {});
     return toast('공유를 지원하지 않는 브라우저입니다. 대신 복사했습니다.', 3000);
@@ -760,7 +759,41 @@ $('#btn-share').addEventListener('click', async () => {
   } catch (err) {
     if (err && err.name !== 'AbortError') toast('공유하지 못했습니다.');
   }
+}
+
+// 녹음 원본(음성 파일) 공유
+async function shareAudio() {
+  const rec = app.current;
+  if (!rec.audio) return toast('녹음 파일이 없습니다.');
+
+  const ext = /mp4/.test(rec.mime) ? 'm4a' : /ogg/.test(rec.mime) ? 'ogg' : 'webm';
+  const base = (rec.title || '회의 녹음').replace(/[\\/:*?"<>|]/g, ' ').trim();
+  const d = new Date(rec.date);
+  const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  const file = new File([rec.audio], `${base} ${stamp}.${ext}`, { type: rec.audio.type || rec.mime || 'audio/webm' });
+
+  if (!navigator.canShare || !navigator.canShare({ files: [file] })) {
+    return toast('이 브라우저는 음성 파일 공유를 지원하지 않습니다.', 3500);
+  }
+  try {
+    await navigator.share({ files: [file], title: rec.title || '회의 녹음' });
+  } catch (err) {
+    if (err && err.name !== 'AbortError') toast('음성을 보내지 못했습니다.');
+  }
+}
+
+const closeShareSheet = () => { $('#share-sheet').hidden = true; };
+
+$('#btn-share').addEventListener('click', async () => {
+  await patchCurrent();
+  // 녹음이 있으면 무엇을 보낼지 고르게 하고, 없으면 바로 텍스트를 공유한다.
+  if (app.current && app.current.audio) $('#share-sheet').hidden = false;
+  else shareText();
 });
+$('#share-text').addEventListener('click', () => { closeShareSheet(); shareText(); });
+$('#share-audio').addEventListener('click', () => { closeShareSheet(); shareAudio(); });
+$('#share-cancel').addEventListener('click', closeShareSheet);
+$('#share-sheet').addEventListener('click', (e) => { if (e.target.id === 'share-sheet') closeShareSheet(); });
 
 /* ─────────── 설정 화면 ─────────── */
 // 참석자 목록. 화자 칩과 같은 저장소(akpil.speakers)를 공유한다.

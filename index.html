@@ -207,6 +207,22 @@
   </div>
 </section>
 
+<!-- 공유 선택 시트 (녹음이 있을 때) -->
+<div class="sheet-back" id="share-sheet" hidden>
+  <div class="sheet" role="dialog" aria-label="공유 방식 선택">
+    <p class="sheet-title">무엇을 보낼까요?</p>
+    <button type="button" class="sheet-item" id="share-text">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+      <span><b>회의록 텍스트</b><small>받아쓴 내용을 글로</small></span>
+    </button>
+    <button type="button" class="sheet-item" id="share-audio">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/></svg>
+      <span><b>음성 파일</b><small>녹음 원본을</small></span>
+    </button>
+    <button type="button" class="sheet-cancel" id="share-cancel">취소</button>
+  </div>
+</div>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="app.js"></script>
