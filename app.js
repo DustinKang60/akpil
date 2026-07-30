@@ -366,8 +366,10 @@ function pickMime() {
 
 async function startRecorder() {
   try {
+    // 통화용 보정을 모두 끈다. 이 셋은 "코앞의 한 사람 목소리"에 맞춘 것이라,
+    // 회의실에서 2~3m 떨어진 말소리를 잡음으로 보고 깎아낸다. 원본을 그대로 받는다.
     app.stream = await navigator.mediaDevices.getUserMedia({
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
     });
     app.mime = pickMime();
     app.recorder = new MediaRecorder(app.stream, app.mime ? { mimeType: app.mime } : undefined);
