@@ -414,11 +414,6 @@ document.addEventListener('visibilitychange', () => {
 });
 
 /* ─────────── 시작 / 일시정지 / 종료 ─────────── */
-// 아이폰(과 아이패드)은 사용자가 손 뗀 직후에만 인식을 켤 수 있어 순서가 다르다.
-const isIOS = () =>
-  /iP(hone|ad|od)/.test(navigator.userAgent) ||
-  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-
 function startRecognition() {
   app.recogWanted = true;
   app.restartFails = 0;
@@ -453,23 +448,19 @@ async function begin() {
       return;
     }
   }
+  // 실험 B(녹음 먼저 → 인식 나중)를 되돌린다.
+  // 그 순서에서는 인식이 마이크를 가져가 녹음이 통째로 무음이 됐다. 측정으로 확인했다.
+  // 원래 순서에서는 녹음에 소리가 담겼고, 받아쓰기만 쓰고 싶으면 설정에서 녹음을 끄면 된다.
+  // 즉 이 순서라야 "녹음이냐 받아쓰기냐"를 사용자가 고를 수 있다.
+  // 아이폰은 사용자가 손가락을 뗀 직후에만 인식을 켤 수 있다 → 어차피 인식이 먼저다.
+  startRecognition();
+
   app.startedAt = Date.now();
   setState('rec');
   startTick();
   renderTranscript();
   acquireWakeLock();
-
-  if (SET.record && !isIOS()) {
-    // 실험 B (안드로이드): 마이크를 먼저 확보한 뒤 그 위에서 인식을 시작한다.
-    // 인식이 마이크를 독점하기 전에 녹음이 자리를 잡게 해서 동시 사용을 노린다.
-    // 녹음이 실패해도(권한 등) startRecorder 는 조용히 넘어가므로 인식은 이어서 켠다.
-    await startRecorder();
-    startRecognition();
-  } else {
-    // 아이폰은 손 뗀 직후에만 인식이 켜진다 → 인식 먼저. 녹음 끈 경우도 이쪽.
-    startRecognition();
-    if (SET.record) await startRecorder();
-  }
+  if (SET.record) await startRecorder();   // 설정에서 끄면 받아쓰기만 한다
 }
 
 function pause() {

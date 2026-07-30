@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .DS_Store
 Thumbs.db
+
+# 시험용 · 로컬 전용 (딥그램 키를 다루므로 저장소에 올리지 않는다)
+_dgtest.html
+SampleData/
