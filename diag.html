@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>악필 진단 — 녹음이 왜 무음인가</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px 14px 40px; background:#0b0d10; color:#e6e9ee;
+         font:16px/1.55 -apple-system,'Noto Sans KR',sans-serif; }
+  h1 { font-size:16px; margin:0 0 4px; color:#7bf5c4; }
+  p.sub { margin:0 0 16px; font-size:13px; color:#8b96a5; }
+  button { width:100%; padding:16px; margin:0; border:0; border-radius:12px;
+           font:700 16px/1.2 inherit; background:#1ee6a0; color:#03130d; }
+  button:disabled { opacity:.35; }
+  .step { background:#151a21; border:1px solid #232a33; border-radius:12px;
+          padding:14px; margin:0 0 12px; }
+  .step h2 { font-size:14px; margin:0 0 4px; color:#e6e9ee; }
+  .step .why { font-size:12px; color:#8b96a5; margin:0 0 10px; }
+  .out { margin-top:10px; font:13px/1.5 monospace; white-space:pre-wrap;
+         word-break:break-all; color:#c8d0da; }
+  .ok { color:#1ee6a0; } .bad { color:#ff6b5e; }
+  #meterWrap { margin-top:10px; }
+  #meter { height:16px; background:#232a33; border-radius:8px; overflow:hidden; }
+  #fill { height:100%; width:0%; background:#1ee6a0; transition:width .07s; }
+  #db { font:700 26px/1.2 monospace; margin-top:6px; }
+  audio { width:100%; margin-top:10px; }
+  .verdict { font-size:15px; font-weight:700; margin-top:10px; }
+</style>
+<body>
+<h1>악필 진단 — 녹음이 왜 무음인가</h1>
+<p class="sub">위에서부터 차례대로 누르세요. 각 단계가 무엇을 가르는지 적어 뒀습니다.</p>
+
+<div class="step">
+  <h2>① 마이크만 열기</h2>
+  <p class="why">말할 때 막대가 움직이면 마이크 자체는 정상입니다.</p>
+  <button id="b1">마이크 열기</button>
+  <div id="meterWrap" hidden>
+    <div id="db">—</div>
+    <div id="meter"><div id="fill"></div></div>
+  </div>
+  <div class="out" id="o1"></div>
+</div>
+
+<div class="step">
+  <h2>② 5초 녹음 — 받아쓰기 없이</h2>
+  <p class="why">음성 인식을 전혀 켜지 않고 녹음만 합니다. 여기서 소리가 담기면 녹음 기능 자체는 멀쩡한 것이고, 범인은 음성 인식입니다.</p>
+  <button id="b2" disabled>5초 녹음</button>
+  <div class="out" id="o2"></div>
+  <audio id="a2" controls hidden></audio>
+</div>
+
+<div class="step">
+  <h2>③ 5초 녹음 — 받아쓰기를 켠 채로</h2>
+  <p class="why">②와 똑같이 녹음하되 음성 인식을 함께 켭니다. ②는 되는데 ③이 무음이면, 인식이 마이크를 가져간다는 것이 확정됩니다.</p>
+  <button id="b3" disabled>5초 녹음 (인식 함께)</button>
+  <div class="out" id="o3"></div>
+  <audio id="a3" controls hidden></audio>
+</div>
+
+<div class="step">
+  <h2>판정</h2>
+  <div class="verdict" id="verdict">② 와 ③ 을 모두 마치면 여기에 나옵니다.</div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const say = (el, s, cls) => { $(el).innerHTML += `<div class="${cls||''}">${s}</div>`; };
+
+let stream = null, ac = null, r2 = null, r3 = null;
+
+// ── 녹음 조각을 디코드해서 실제 음량을 잰다 ──
+async function measure(blob) {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const ctx = new AC();
+  let buf;
+  try { buf = await ctx.decodeAudioData(await blob.arrayBuffer()); }
+  catch (e) { ctx.close(); return { err: '디코드 실패: ' + e.name }; }
+  ctx.close();
+  const ch = buf.getChannelData(0);
+  let sum = 0, zero = 0, peak = 0;
+  for (let i = 0; i < ch.length; i++) {
+    sum += ch[i] * ch[i];
+    if (ch[i] === 0) zero++;
+    if (Math.abs(ch[i]) > peak) peak = Math.abs(ch[i]);
+  }
+  const rms = Math.sqrt(sum / ch.length);
+  return {
+    sec: buf.duration.toFixed(1),
+    rate: buf.sampleRate,
+    db: rms > 0 ? (20 * Math.log10(rms)).toFixed(1) : -99,
+    zero: (zero / ch.length * 100).toFixed(1),
+    peak: peak.toFixed(4),
+  };
+}
+
+function report(el, m, blob, audioEl) {
+  if (m.err) return say(el, m.err, 'bad');
+  const silent = m.db < -55 || m.zero > 80;
+  say(el, `${m.sec}초 · ${(blob.size/1024).toFixed(0)} KB · ${m.rate}Hz`);
+  say(el, `음량 ${m.db} dB · 최대 ${m.peak} · 값이 0인 비율 ${m.zero}%`);
+  say(el, silent ? '→ 무음입니다. 소리가 안 담겼습니다.' : '→ 소리가 담겼습니다.',
+      silent ? 'bad' : 'ok');
+  audioEl.src = URL.createObjectURL(blob);
+  audioEl.hidden = false;
+  return silent;
+}
+
+// ── ① 마이크 ──
+$('#b1').onclick = async () => {
+  $('#o1').innerHTML = '';
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
+    });
+  } catch (e) { return say('#o1', '마이크 열기 실패: ' + e.name + ' — ' + e.message, 'bad'); }
+
+  const t = stream.getAudioTracks()[0];
+  say('#o1', '마이크 열림: ' + (t.label || '이름없음'), 'ok');
+  say('#o1', '상태 ' + t.readyState + ' · muted=' + t.muted + ' · enabled=' + t.enabled);
+  try { say('#o1', '적용된 설정: ' + JSON.stringify(t.getSettings())); } catch {}
+
+  ac = new (window.AudioContext || window.webkitAudioContext)();
+  await ac.resume();
+  const an = ac.createAnalyser();
+  an.fftSize = 1024;
+  ac.createMediaStreamSource(stream).connect(an);
+  const buf = new Float32Array(an.fftSize);
+  $('#meterWrap').hidden = false;
+  setInterval(() => {
+    an.getFloatTimeDomainData(buf);
+    let s = 0;
+    for (let i = 0; i < buf.length; i++) s += buf[i] * buf[i];
+    const rms = Math.sqrt(s / buf.length);
+    const db = rms > 0 ? 20 * Math.log10(rms) : -99;
+    $('#db').textContent = db.toFixed(1) + ' dB';
+    $('#db').className = db > -50 ? 'ok' : 'bad';
+    $('#fill').style.width = Math.max(0, Math.min(100, (db + 60) / 60 * 100)) + '%';
+  }, 100);
+  $('#b2').disabled = false;
+  $('#b3').disabled = false;
+};
+
+function pickMime() {
+  const list = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+  return list.find((m) => MediaRecorder.isTypeSupported(m)) || '';
+}
+
+async function record5(el) {
+  const mime = pickMime();
+  say(el, '녹음 형식: ' + (mime || '브라우저 기본'));
+  const chunks = [];
+  const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+  rec.ondataavailable = (e) => { if (e.data && e.data.size) chunks.push(e.data); };
+  rec.start(1000);
+  say(el, '녹음 중… 지금 말씀하세요 (5초)');
+  await new Promise((r) => setTimeout(r, 5000));
+  await new Promise((r) => { rec.onstop = r; rec.stop(); });
+  say(el, '조각 ' + chunks.length + '개');
+  return new Blob(chunks, { type: mime || 'audio/webm' });
+}
+
+let silent2 = null, silent3 = null;
+
+// ── ② 인식 없이 녹음 ──
+$('#b2').onclick = async () => {
+  $('#o2').innerHTML = ''; $('#b2').disabled = true; $('#b3').disabled = true;
+  const blob = await record5('#o2');
+  silent2 = report('#o2', await measure(blob), blob, $('#a2'));
+  $('#b2').disabled = false; $('#b3').disabled = false;
+  judge();
+};
+
+// ── ③ 인식 켜고 녹음 ──
+$('#b3').onclick = async () => {
+  $('#o3').innerHTML = ''; $('#b2').disabled = true; $('#b3').disabled = true;
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let sr = null;
+  if (!SR) { say('#o3', '이 브라우저는 음성 인식을 지원하지 않습니다.', 'bad'); }
+  else {
+    sr = new SR();
+    sr.lang = 'ko-KR'; sr.continuous = true; sr.interimResults = true;
+    sr.onerror = (e) => say('#o3', '인식 오류: ' + e.error, 'bad');
+    sr.onresult = (e) => {
+      const t = e.results[e.results.length - 1][0].transcript;
+      say('#o3', '들린 말: ' + t);
+    };
+    try { sr.start(); say('#o3', '음성 인식 켬'); } catch (e) { say('#o3', '인식 시작 실패: ' + e, 'bad'); }
+    await new Promise((r) => setTimeout(r, 600));
+  }
+  const blob = await record5('#o3');
+  if (sr) { try { sr.stop(); } catch {} }
+  silent3 = report('#o3', await measure(blob), blob, $('#a3'));
+  $('#b2').disabled = false; $('#b3').disabled = false;
+  judge();
+};
+
+function judge() {
+  if (silent2 === null || silent3 === null) return;
+  let v;
+  if (!silent2 && silent3)
+    v = '음성 인식이 마이크를 가져간다. 원인 확정 — 표준 웹으로는 동시 사용 불가.';
+  else if (!silent2 && !silent3)
+    v = '둘 다 소리가 담겼다. 이 폰에서는 동시 사용이 된다 — 원인은 앱의 다른 곳에 있다.';
+  else if (silent2 && silent3)
+    v = '인식과 무관하게 녹음 자체가 무음이다. 마이크·브라우저·권한 쪽 문제다.';
+  else
+    v = '인식을 켰을 때만 소리가 담겼다. 예상 밖의 결과 — 다시 한 번 재보자.';
+  $('#verdict').textContent = v;
+  $('#verdict').className = 'verdict ' + (silent2 || silent3 ? 'bad' : 'ok');
+}
+</script>
+</body>
+</html>

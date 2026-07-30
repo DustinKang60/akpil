@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<title>악필 최초판 (진단용)</title>
+<meta name="description" content="말소리를 실시간으로 받아쓰는 회의록 앱">
+<meta name="theme-color" content="#0B0D11">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="악필">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ────────── 녹음 화면 ────────── -->
+<section class="screen is-active" id="screen-rec">
+
+  <header class="topbar">
+    <div class="brand">
+      <h1>악필</h1>
+      <span class="maker">작은앱공방</span>
+    </div>
+    <div class="topbar-actions">
+      <button type="button" class="iconbtn" id="btn-list" aria-label="회의 목록">
+        <svg viewBox="0 0 24 24" class="ic"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></svg>
+      </button>
+      <button type="button" class="iconbtn" id="btn-set" aria-label="설정">
+        <svg viewBox="0 0 24 24" class="ic"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="statusbar" id="statusbar">
+    <div class="status-left">
+      <span class="dot" id="status-dot" aria-hidden="true"></span>
+      <span class="status-text" id="status-text">대기 중</span>
+      <span class="sep" aria-hidden="true">·</span>
+      <span class="elapsed" id="elapsed">00:00</span>
+    </div>
+    <div class="status-right" id="wake-badge" hidden>
+      <svg viewBox="0 0 24 24" class="ic-sm"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>
+      화면 유지
+    </div>
+  </div>
+
+  <div class="transcript" id="transcript" role="log" aria-live="polite" aria-label="변환된 회의 내용">
+    <div class="empty" id="empty-hint">
+      <svg viewBox="0 0 24 24" class="ic-lg"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/></svg>
+      <p>아래 버튼을 누르면<br>녹음과 받아쓰기가 함께 시작됩니다.</p>
+    </div>
+  </div>
+
+  <div class="speakers" id="speakers">
+    <button type="button" class="chip is-on" data-speaker="">화자 없음</button>
+    <button type="button" class="chip chip-add" id="btn-add-speaker" aria-label="화자 추가">＋</button>
+  </div>
+
+  <nav class="controls" aria-label="녹음 조작">
+    <button type="button" class="ctl" id="btn-mark" aria-label="중요 표시" disabled>
+      <svg viewBox="0 0 24 24" class="ic"><path d="m12 3 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 20.9l1.1-6.5L2.6 9.8l6.5-.9L12 3z"/></svg>
+      <span>중요</span>
+    </button>
+    <button type="button" class="ctl" id="btn-todo" aria-label="할일 표시" disabled>
+      <svg viewBox="0 0 24 24" class="ic"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      <span>할일</span>
+    </button>
+
+    <button type="button" class="ctl-main" id="btn-main" aria-label="녹음 시작">
+      <svg viewBox="0 0 24 24" class="ic-main" id="ic-main"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/></svg>
+    </button>
+
+    <button type="button" class="ctl" id="btn-edit" aria-label="문장 수정" disabled>
+      <svg viewBox="0 0 24 24" class="ic"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg>
+      <span>수정</span>
+    </button>
+    <button type="button" class="ctl" id="btn-stop" aria-label="회의 종료" disabled>
+      <svg viewBox="0 0 24 24" class="ic"><rect x="5" y="5" width="14" height="14" rx="2"/></svg>
+      <span>종료</span>
+    </button>
+  </nav>
+</section>
+
+<!-- ────────── 정리 화면 ────────── -->
+<section class="screen" id="screen-save">
+  <header class="topbar">
+    <button type="button" class="iconbtn" id="btn-save-back" aria-label="뒤로">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    </button>
+    <div class="brand"><h1>회의 정리</h1></div>
+    <div class="topbar-actions"></div>
+  </header>
+
+  <div class="form">
+    <label class="field">
+      <span>제목</span>
+      <input type="text" id="in-title" placeholder="예: 3분기 예산 회의">
+    </label>
+    <label class="field">
+      <span>참석자</span>
+      <input type="text" id="in-people" placeholder="쉼표로 구분해서 입력">
+    </label>
+    <div class="meta-row" id="save-meta"></div>
+    <audio id="player" controls preload="metadata" hidden></audio>
+  </div>
+
+  <div class="transcript transcript-review" id="review"></div>
+
+  <nav class="controls controls-flat">
+    <button type="button" class="btn btn-ghost" id="btn-copy">
+      <svg viewBox="0 0 24 24" class="ic"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      복사
+    </button>
+    <button type="button" class="btn btn-primary" id="btn-share">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><path d="M16 6l-4-4-4 4M12 2v14"/></svg>
+      공유
+    </button>
+  </nav>
+</section>
+
+<!-- ────────── 목록 화면 ────────── -->
+<section class="screen" id="screen-list">
+  <header class="topbar">
+    <button type="button" class="iconbtn" id="btn-list-back" aria-label="뒤로">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    </button>
+    <div class="brand"><h1>회의 목록</h1></div>
+    <div class="topbar-actions"></div>
+  </header>
+  <div class="list" id="list"></div>
+</section>
+
+<!-- ────────── 설정 화면 ────────── -->
+<section class="screen" id="screen-set">
+  <header class="topbar">
+    <button type="button" class="iconbtn" id="btn-set-back" aria-label="뒤로">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+    </button>
+    <div class="brand"><h1>설정</h1></div>
+    <div class="topbar-actions"></div>
+  </header>
+
+  <div class="set-scroll">
+
+    <section class="group">
+      <h2>녹음</h2>
+      <div class="row">
+        <div class="row-txt">
+          <p>함께 녹음하기</p>
+          <small>끄면 받아쓰기만 합니다. 아이폰에서 글이 안 올라오면 꺼 보세요.</small>
+        </div>
+        <button type="button" class="sw" id="set-record" role="switch" aria-checked="true" aria-label="함께 녹음하기"><i></i></button>
+      </div>
+    </section>
+
+    <section class="group">
+      <h2>받아쓰기</h2>
+      <div class="row">
+        <div class="row-txt">
+          <p>문단 나누기</p>
+          <small>말이 이만큼 끊기면 새 문단으로 넘깁니다.</small>
+        </div>
+        <select id="set-gap" aria-label="문단 나누기 간격">
+          <option value="5">5초</option>
+          <option value="8">8초</option>
+          <option value="15">15초</option>
+          <option value="30">30초</option>
+        </select>
+      </div>
+      <div class="row">
+        <div class="row-txt"><p>화자 칩 보이기</p><small>이름을 탭해 발언자를 붙이는 줄입니다.</small></div>
+        <button type="button" class="sw" id="set-chips" role="switch" aria-checked="true" aria-label="화자 칩 보이기"><i></i></button>
+      </div>
+      <div class="row">
+        <div class="row-txt"><p>글자 크기</p><small id="size-out">15px</small></div>
+        <input type="range" id="set-size" min="13" max="21" step="1" value="15" aria-label="글자 크기">
+      </div>
+    </section>
+
+    <section class="group">
+      <h2>용어 사전</h2>
+      <p class="group-note">회사 약어나 사람 이름처럼 늘 틀리게 들리는 말을 자동으로 고칩니다. 체감 정확도가 여기서 제일 크게 올라갑니다.</p>
+      <div class="dict" id="dict"></div>
+      <div class="dict-add">
+        <input type="text" id="dict-from" placeholder="들리는 대로" aria-label="틀리게 들리는 말">
+        <span class="arrow" aria-hidden="true">→</span>
+        <input type="text" id="dict-to" placeholder="바른 말" aria-label="바르게 고칠 말">
+        <button type="button" class="dict-plus" id="dict-add" aria-label="추가">＋</button>
+      </div>
+    </section>
+
+    <p class="foot">악필 · 작은앱공방</p>
+  </div>
+</section>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
