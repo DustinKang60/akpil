@@ -90,6 +90,7 @@ const app = {
   mime: '',
   recog: null,
   recogWanted: false,     // 인식이 계속 돌아야 하는 상태인가
+  recogSegs: [],          // 이번 인식 세션: 결과 인덱스 → 해당 문단 (교체용)
   restartAt: 0,
   restartFails: 0,
   wakeLock: null,
@@ -182,35 +183,55 @@ function renderTranscript(target = $('#transcript'), segs = app.segments, withIn
   target.scrollTop = target.scrollHeight;
 }
 
-// 한 시간짜리 회의면 문단이 수백 개가 된다.
-// 매번 전체를 다시 그리면 뒤로 갈수록 느려지므로 바뀐 부분만 손댄다.
-function pushText(raw) {
+// 새 문단을 화면 끝에 붙인다. 한 시간짜리 회의면 문단이 수백 개가 되므로
+// 매번 전체를 다시 그리지 않고 이 문단 하나만 DOM 에 넣는다.
+function appendSeg(seg) {
+  const box = $('#transcript');
+  const hint = $('#empty-hint');
+  if (hint) hint.remove();
+  const interim = $('#interim');
+  if (interim) box.insertBefore(segEl(seg), interim);
+  else box.appendChild(segEl(seg));
+  box.scrollTop = box.scrollHeight;
+}
+
+// 인식 결과를 문단에 반영한다.
+// 안드로이드 크롬은 하나의 확정 결과를 "자라는 채로"(아 → 아 지금 → …)
+// 같은 인덱스로 매번 다시 보낸다. 그래서 인덱스별로 문단을 하나 잡아두고,
+// 같은 인덱스가 또 오면 새로 붙이지 말고 최신 값으로 "교체"한다.
+// 이러면 표준 브라우저(인덱스마다 다른 발화)와 이 병리 패턴 둘 다 맞는다.
+function commitAt(index, raw) {
   const text = fixTerms(raw);
   const box = $('#transcript');
-  const now = elapsedMs();
-  const last = app.segments[app.segments.length - 1];
-  const merge = last && last.speaker === app.speaker
-    && now - last.lastAt < SET.gap * 1000 && !last.mark;
+  const seg = app.recogSegs[index];
 
-  if (merge) {
-    last.text += ' ' + text;
-    last.lastAt = now;
-    const body = box.querySelector(`.seg[data-id="${last.id}"] .seg-body`);
-    if (body) body.textContent = last.text;
+  if (seg) {
+    seg.text = text;
+    seg.lastAt = elapsedMs();
+    const body = box.querySelector(`.seg[data-id="${seg.id}"] .seg-body`);
+    if (body) body.textContent = text;
     else renderTranscript();
+    box.scrollTop = box.scrollHeight;
   } else {
-    const seg = {
+    const s = {
       id: 's' + Date.now() + Math.random().toString(36).slice(2, 6),
-      t: now, lastAt: now, speaker: app.speaker, text, mark: null,
+      t: elapsedMs(), lastAt: elapsedMs(), speaker: app.speaker, text, mark: null,
     };
-    app.segments.push(seg);
-    const hint = $('#empty-hint');
-    if (hint) hint.remove();
-    const interim = $('#interim');
-    if (interim) box.insertBefore(segEl(seg), interim);
-    else box.appendChild(segEl(seg));
+    app.segments.push(s);
+    app.recogSegs[index] = s;
+    appendSeg(s);
   }
-  box.scrollTop = box.scrollHeight;
+  saveDraft();
+}
+
+// 테스트·초안 복구처럼 인식 밖에서 문단을 직접 넣을 때 쓴다.
+function pushText(raw) {
+  const s = {
+    id: 's' + Date.now() + Math.random().toString(36).slice(2, 6),
+    t: elapsedMs(), lastAt: elapsedMs(), speaker: app.speaker, text: fixTerms(raw), mark: null,
+  };
+  app.segments.push(s);
+  appendSeg(s);
   saveDraft();
 }
 
@@ -239,14 +260,18 @@ function makeRecognizer() {
   r.interimResults = true;
   r.maxAlternatives = 1;
 
+  // 새 인식 세션이 시작되면 인덱스→문단 매핑을 비운다.
+  // 이후 결과 인덱스는 이번 세션 기준으로 0 부터 다시 센다.
+  r.onstart = () => { app.recogSegs = []; };
+
   r.onresult = (e) => {
     let interim = '';
-    for (let i = e.resultIndex; i < e.results.length; i++) {
+    for (let i = 0; i < e.results.length; i++) {
       const res = e.results[i];
       const txt = (res[0] && res[0].transcript || '').trim();
       if (!txt) continue;
-      if (res.isFinal) pushText(txt);
-      else interim += txt + ' ';
+      if (res.isFinal) commitAt(i, txt);      // 그 자리 문단을 만들거나 최신 값으로 교체
+      else interim += txt + ' ';              // 아직 확정 전 → 미리보기 줄에만
     }
     const el = $('#interim');
     if (el) {
@@ -372,6 +397,7 @@ async function begin() {
   // 아이폰은 사용자가 손가락을 뗀 직후에만 인식을 켤 수 있다 → 제일 먼저 켠다.
   app.recogWanted = true;
   app.restartFails = 0;
+  app.recogSegs = [];
   try { app.recog.start(); } catch { /* 이미 켜져 있으면 무시 */ }
 
   app.startedAt = Date.now();
@@ -398,6 +424,7 @@ function resume() {
   app.startedAt = Date.now();
   app.recogWanted = true;
   app.restartFails = 0;
+  app.recogSegs = [];
   try { app.recog.start(); } catch {}
   if (app.recorder && app.recorder.state === 'paused') app.recorder.resume();
   else if (!app.recorder && SET.record) startRecorder();
