@@ -761,6 +761,31 @@ $('#btn-share').addEventListener('click', async () => {
 });
 
 /* ─────────── 설정 화면 ─────────── */
+// 참석자 목록. 화자 칩과 같은 저장소(akpil.speakers)를 공유한다.
+function renderPeople() {
+  const box = $('#people-list');
+  box.innerHTML = '';
+  loadSpeakers().forEach((name) => {
+    const row = document.createElement('div');
+    row.className = 'dict-item';
+    const label = document.createElement('span');
+    label.className = 'from'; label.textContent = name;
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.setAttribute('aria-label', `"${name}" 삭제`);
+    del.innerHTML = '<svg viewBox="0 0 24 24" class="ic"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+    del.addEventListener('click', () => {
+      saveSpeakers(loadSpeakers().filter((n) => n !== name));
+      if (app.speaker === name) app.speaker = '';   // 지운 사람이 지금 화자면 화자 없음으로
+      renderPeople();
+      renderSpeakers();
+      toast(`"${name}"을(를) 지웠습니다.`);
+    });
+    row.append(label, del);
+    box.appendChild(row);
+  });
+}
+
 function renderDict() {
   const box = $('#dict');
   box.innerHTML = '';
@@ -792,9 +817,27 @@ function openSet() {
   $('#set-gap').value = String(SET.gap);
   $('#set-size').value = String(SET.size);
   $('#size-out').textContent = SET.size + 'px';
+  renderPeople();
   renderDict();
   showScreen('screen-set');
 }
+
+function addPerson() {
+  const input = $('#person-name');
+  const name = input.value.trim();
+  if (!name) return toast('이름을 입력해 주세요.');
+  const list = loadSpeakers();
+  if (list.includes(name)) { input.value = ''; return toast('이미 있는 이름입니다.'); }
+  list.push(name);
+  saveSpeakers(list);
+  renderPeople();
+  renderSpeakers();
+  input.value = '';
+  input.focus();
+  toast(`"${name}"을(를) 추가했습니다.`);
+}
+$('#person-add').addEventListener('click', addPerson);
+$('#person-name').addEventListener('keydown', (e) => { if (e.key === 'Enter') addPerson(); });
 
 $('#btn-set').addEventListener('click', () => {
   if (app.state !== 'idle') return toast('회의를 종료한 뒤에 바꿀 수 있습니다.');
