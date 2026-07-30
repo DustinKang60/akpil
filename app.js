@@ -414,6 +414,18 @@ document.addEventListener('visibilitychange', () => {
 });
 
 /* ─────────── 시작 / 일시정지 / 종료 ─────────── */
+// 아이폰(과 아이패드)은 사용자가 손 뗀 직후에만 인식을 켤 수 있어 순서가 다르다.
+const isIOS = () =>
+  /iP(hone|ad|od)/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+
+function startRecognition() {
+  app.recogWanted = true;
+  app.restartFails = 0;
+  app.recogLast = null;
+  try { app.recog.start(); } catch { /* 이미 켜져 있으면 무시 */ }
+}
+
 function setState(s) {
   app.state = s;
   document.body.classList.toggle('is-rec', s === 'rec');
@@ -441,18 +453,23 @@ async function begin() {
       return;
     }
   }
-  // 아이폰은 사용자가 손가락을 뗀 직후에만 인식을 켤 수 있다 → 제일 먼저 켠다.
-  app.recogWanted = true;
-  app.restartFails = 0;
-  app.recogLast = null;
-  try { app.recog.start(); } catch { /* 이미 켜져 있으면 무시 */ }
-
   app.startedAt = Date.now();
   setState('rec');
   startTick();
   renderTranscript();
   acquireWakeLock();
-  if (SET.record) await startRecorder();   // 설정에서 끄면 받아쓰기만 한다
+
+  if (SET.record && !isIOS()) {
+    // 실험 B (안드로이드): 마이크를 먼저 확보한 뒤 그 위에서 인식을 시작한다.
+    // 인식이 마이크를 독점하기 전에 녹음이 자리를 잡게 해서 동시 사용을 노린다.
+    // 녹음이 실패해도(권한 등) startRecorder 는 조용히 넘어가므로 인식은 이어서 켠다.
+    await startRecorder();
+    startRecognition();
+  } else {
+    // 아이폰은 손 뗀 직후에만 인식이 켜진다 → 인식 먼저. 녹음 끈 경우도 이쪽.
+    startRecognition();
+    if (SET.record) await startRecorder();
+  }
 }
 
 function pause() {
@@ -469,10 +486,8 @@ function resume() {
   if (!app.recog) return toast('이 브라우저는 음성 인식을 지원하지 않습니다.', 4000);
 
   app.startedAt = Date.now();
-  app.recogWanted = true;
-  app.restartFails = 0;
-  app.recogLast = null;
-  try { app.recog.start(); } catch {}
+  // 일시정지 중에도 마이크 스트림은 살아 있으므로 재개는 순서를 따질 필요가 없다.
+  startRecognition();
   if (app.recorder && app.recorder.state === 'paused') app.recorder.resume();
   else if (!app.recorder && SET.record) startRecorder();
   setState('rec');
