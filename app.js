@@ -782,15 +782,85 @@ async function shareAudio() {
   }
 }
 
+// ── 녹음을 wav 파일로 저장(다운로드) ──
+// 안드로이드 크롬은 webm 으로 녹음한다. 이걸 16kHz mono wav 로 바꿔서
+// 폰 다운로드 폴더에 파일로 떨어뜨린다. wav 는 어디서든 열리고 음성 AI 에도
+// 그대로 넣을 수 있다. 16kHz mono 는 음성 인식 표준이라 파일도 작아진다.
+function encodeWav(audioBuffer) {
+  const ch = audioBuffer.getChannelData(0);
+  const sr = audioBuffer.sampleRate;
+  const n = ch.length;
+  const buf = new ArrayBuffer(44 + n * 2);
+  const view = new DataView(buf);
+  const wr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  wr(0, 'RIFF'); view.setUint32(4, 36 + n * 2, true); wr(8, 'WAVE');
+  wr(12, 'fmt '); view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);      // PCM
+  view.setUint16(22, 1, true);      // mono
+  view.setUint32(24, sr, true);
+  view.setUint32(28, sr * 2, true); // byte rate
+  view.setUint16(32, 2, true);      // block align
+  view.setUint16(34, 16, true);     // bits per sample
+  wr(36, 'data'); view.setUint32(40, n * 2, true);
+  let off = 44;
+  for (let i = 0; i < n; i++) {
+    const s = Math.max(-1, Math.min(1, ch[i]));
+    view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+    off += 2;
+  }
+  return new Blob([buf], { type: 'audio/wav' });
+}
+
+async function audioToWav(blob) {
+  const arr = await blob.arrayBuffer();
+  const AC = window.AudioContext || window.webkitAudioContext;
+  const tmp = new AC();
+  const decoded = await tmp.decodeAudioData(arr);
+  tmp.close();
+  const off = new OfflineAudioContext(1, Math.max(1, Math.ceil(decoded.duration * 16000)), 16000);
+  const src = off.createBufferSource();
+  src.buffer = decoded;
+  src.connect(off.destination);
+  src.start();
+  const rendered = await off.startRendering();
+  return encodeWav(rendered);
+}
+
+function downloadBlob(blob, name) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 10000);
+}
+
+async function saveAudioAsWav() {
+  const rec = app.current;
+  if (!rec.audio) return toast('녹음 파일이 없습니다.');
+  const base = (rec.title || '회의 녹음').replace(/[\\/:*?"<>|]/g, ' ').trim();
+  const d = new Date(rec.date);
+  const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}_${pad(d.getHours())}${pad(d.getMinutes())}`;
+  toast('음성을 변환하는 중…', 8000);
+  try {
+    const wav = await audioToWav(rec.audio);
+    downloadBlob(wav, `${base} ${stamp}.wav`);
+    toast('wav 파일을 저장했습니다. 파일 앱의 "다운로드"에서 찾으세요.', 4500);
+  } catch (err) {
+    console.error('wav 변환 실패:', err);
+    toast('변환에 실패했습니다. 대신 원본 보내기를 써 주세요.', 4000);
+  }
+}
+
 const closeShareSheet = () => { $('#share-sheet').hidden = true; };
 
 $('#btn-share').addEventListener('click', async () => {
   await patchCurrent();
-  // 녹음이 있으면 무엇을 보낼지 고르게 하고, 없으면 바로 텍스트를 공유한다.
+  // 녹음이 있으면 무엇을 할지 고르게 하고, 없으면 바로 텍스트를 공유한다.
   if (app.current && app.current.audio) $('#share-sheet').hidden = false;
   else shareText();
 });
 $('#share-text').addEventListener('click', () => { closeShareSheet(); shareText(); });
+$('#save-audio').addEventListener('click', () => { closeShareSheet(); saveAudioAsWav(); });
 $('#share-audio').addEventListener('click', () => { closeShareSheet(); shareAudio(); });
 $('#share-cancel').addEventListener('click', closeShareSheet);
 $('#share-sheet').addEventListener('click', (e) => { if (e.target.id === 'share-sheet') closeShareSheet(); });
