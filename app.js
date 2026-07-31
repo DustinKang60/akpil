@@ -792,6 +792,28 @@ async function finish() {
 /* ─────────── 정리 화면 ─────────── */
 let playerUrl = null;
 
+// MediaRecorder 로 만든 webm 에는 전체 길이가 안 적혀 있다. 녹음이 끝나는
+// 시점을 미리 알 수 없어서 헤더에 쓸 수가 없기 때문이다. 그래서 재생기의
+// 총 시간이 비어 있고, 막대를 끌어 옮기지도 못한다.
+//
+// 아주 먼 지점으로 한 번 건너뛰면 브라우저가 파일 끝까지 읽어 길이를
+// 알아낸다. 그 뒤 처음으로 되돌려 놓는다. 화면에는 순간적으로만 보인다.
+function fixDuration(el) {
+  const settle = () => {
+    if (el.duration && Number.isFinite(el.duration)) return;   // 이미 안다면 그만
+    try { el.currentTime = 1e101; } catch { return; }
+    const back = () => {
+      el.removeEventListener('timeupdate', back);
+      el.removeEventListener('durationchange', back);
+      try { el.currentTime = 0; } catch {}
+    };
+    el.addEventListener('timeupdate', back);
+    el.addEventListener('durationchange', back);
+  };
+  if (el.readyState > 0) settle();
+  else el.addEventListener('loadedmetadata', settle, { once: true });
+}
+
 function openSave(rec, from = 'screen-rec') {
   app.current = rec;
   app.saveFrom = from;
@@ -811,6 +833,7 @@ function openSave(rec, from = 'screen-rec') {
     playerUrl = URL.createObjectURL(rec.audio);
     player.src = playerUrl;
     player.hidden = false;
+    fixDuration(player);
   } else {
     player.removeAttribute('src');
     player.hidden = true;
