@@ -233,7 +233,8 @@ body.is-rec .ctl-main{background:var(--rec);color:#2A0710}
 .card-main{flex:1;min-width:0}
 .card h3{margin:0 0 3px;font-size:15px;font-weight:500;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.card p{margin:0;font-size:12px;color:var(--text-3)}
+.card p{margin:0;font-size:12px;color:var(--text-3);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 /* 참석자는 한 줄만. 많으면 끝을 … 로 자른다 (목록이 길어지면 훑기 어렵다) */
 .card .who{margin:2px 0 0;font-size:12px;color:var(--text-2);
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}

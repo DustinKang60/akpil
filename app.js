@@ -877,11 +877,15 @@ async function openList() {
     main.className = 'card-main';
     const h = document.createElement('h3');
     h.textContent = r.title || '제목 없는 회의';
+    // 글과 녹음이 각각 남아 있는지 한눈에 보이게 한다. 없는 것도 적는다 —
+    // 아무 표시가 없으면 "없는 것"인지 "안 적은 것"인지 알 수 없다.
+    const segs = (r.segments || []).length;
     const p = document.createElement('p');
     p.textContent =
       `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}. ` +
-      `${pad(d.getHours())}:${pad(d.getMinutes())} · ${Math.max(1, Math.round(r.dur / 60000))}분` +
-      (r.audio ? ' · 녹음 있음' : '');
+      `${pad(d.getHours())}:${pad(d.getMinutes())} · ${Math.max(1, Math.round(r.dur / 60000))}분 · ` +
+      (segs ? `글 ${segs}문단` : '글 없음') + ' · ' +
+      (r.audio ? '녹음 있음' : '녹음 없음');
     main.append(h, p);
 
     // 참석자도 보여준다. 목록에서 "누가 있던 회의였나"로 찾는 일이 많다.
