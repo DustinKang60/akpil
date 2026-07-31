@@ -74,13 +74,25 @@ function saveSet() { localStorage.setItem('akpil.set', JSON.stringify(SET)); }
 // 틀린 결과를 본 다음에야 규칙을 넣을 수 있고, 같은 말도 사람마다 다르게 들려서
 // 단어 하나에 규칙이 여러 개 필요했다 ("딥그램"이 뒷그램·댓글에·미끄럼으로 들렸다).
 // 바른 말을 미리 알려주면 딥그램이 그 말을 후보로 놓고 듣는다. 예방이 교정보다 낫다.
-const MAX_TERMS = 100;                    // 딥그램 한 요청당 상한
+// 나중에 딥그램에 보내게 되면 상한이 있다 — 한 요청당 500 토큰.
+// 실측: 한국어 3~6글자 낱말 80개는 통과, 100개는 HTTP 400 으로 거절.
+// 낱말이 길면 80개보다 적어도 넘으므로 개수와 글자 수를 함께 막는다.
+const MAX_TERMS = 60;
+const MAX_TERM_CHARS = 300;
 
 function allTerms() {
   const list = [...(SET.dict || []), ...loadSpeakers()]
     .map((t) => String(t || '').trim())
     .filter(Boolean);
-  return [...new Set(list)].slice(0, MAX_TERMS);   // 중복 제거
+  const uniq = [...new Set(list)];
+  const out = [];
+  let chars = 0;
+  for (const t of uniq) {
+    if (out.length >= MAX_TERMS || chars + t.length > MAX_TERM_CHARS) break;
+    out.push(t);
+    chars += t.length;
+  }
+  return out;
 }
 
 function applySet() {
@@ -689,13 +701,24 @@ const DG_URL = 'wss://api.deepgram.com/v1/listen';
 const dgKey = () => (localStorage.getItem('akpil.dgkey') || '').trim();
 
 function dgQuery() {
-  const q = new URLSearchParams({
+  return new URLSearchParams({
     model: 'nova-3', language: SET.lang === 'en' ? 'en' : 'ko',
     smart_format: 'true', punctuate: 'true', interim_results: 'true',
-  });
-  // 용어 사전과 참석자 이름을 미리 알려준다. 딥그램이 그 말을 후보로 놓고 듣는다.
-  allTerms().forEach((t) => q.append('keyterm', t));
-  return q.toString();
+  }).toString();
+  // 용어 사전(allTerms)은 아직 보내지 않는다. 켜려면 아래 한 줄을 되살린다.
+  //   allTerms().forEach((t) => q.append('keyterm', t));
+  //
+  // 왜 안 보내는가 — 이득은 확인되지 않았고 위험은 확인됐다.
+  //   딥그램 문서 어디에도 "한국어에서 keyterm 이 동작한다"는 말이 없다.
+  //   keyterm 문서는 "Nova-3 에서 동작"까지만 적고 언어를 밝히지 않고,
+  //   모델·언어 표에는 keyterm 칸 자체가 없다. 근거는 "던져도 거절하지
+  //   않더라"뿐인데, 딥그램은 지원 안 하는 옵션을 조용히 무시하기도 한다.
+  //   반면 상한(한 요청 500 토큰)은 실측으로 확인됐다 — 한국어 낱말 100개를
+  //   보내니 HTTP 400 "Keyterm limit exceeded" 로 연결 자체가 거절됐다.
+  //   (80개는 통과. 낱말이 길면 80개보다 적어도 넘는다.)
+  //
+  // 확인하는 법 — 앱을 고칠 필요 없다. 회의 녹음 파일 하나를 keyterm 있이/없이
+  // 두 번 돌려 받아쓴 결과를 비교하면 된다. 정말 나아지면 그때 켠다.
 }
 
 async function startDeepgram() {
