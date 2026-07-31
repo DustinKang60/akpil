@@ -518,6 +518,16 @@ function dropStream() {
   app.stream = null;
 }
 
+// 상태 줄의 "대기 중" 자리를 잠깐 빌려 쓴다. 대기 중일 때만 바꾸고,
+// 회의가 시작되면 setState 가 알아서 제 글자로 되돌린다.
+function sayStatus(text, kind) {
+  if (app.state && app.state !== 'idle') return;
+  const el = $('#status-text');
+  if (!el) return;
+  el.textContent = text;
+  el.className = 'status-text' + (kind ? ' st-' + kind : '');
+}
+
 async function micPreflight() {
   try {
     const p = await navigator.permissions.query({ name: 'microphone' });
@@ -526,12 +536,22 @@ async function micPreflight() {
 
   let s;
   try { s = await gumWithTimeout({ audio: MIC_BASE }, 4000); } catch { return; }
-  const p = await micProbe(s, 1500);           // 급할 것 없으니 넉넉히 잰다
-  s.getTracks().forEach((t) => t.stop());
-  if (!micIsDead(p)) return;
 
-  $('#level').classList.add('is-silent');
-  toast('마이크에 소리가 안 들어옵니다. 블루투스 이어폰·시계의 통화 오디오를 꺼 주세요.', 7000);
+  // 재는 동안 음량 칸을 실제로 움직여 준다. 말 없이 기다리게 하지 않는다.
+  sayStatus('마이크 확인 중…');
+  startMeter(s);
+  const p = await micProbe(s, 1500);            // 급할 것 없으니 넉넉히 잰다
+  stopMeter();
+  s.getTracks().forEach((t) => t.stop());
+
+  if (micIsDead(p)) {
+    $('#level').classList.add('is-silent');
+    sayStatus('마이크 무음', 'bad');
+    toast('마이크에 소리가 안 들어옵니다. 블루투스 이어폰·시계의 통화 오디오를 꺼 주세요.', 7000);
+    return;
+  }
+  sayStatus('녹음 가능', 'ok');
+  setTimeout(() => sayStatus('대기 중'), 2500);
 }
 
 // 소리 기기가 바뀌면(이어폰 연결 등) 회의 중에 곧바로 알린다.
@@ -781,7 +801,9 @@ function setState(s) {
   app.state = s;
   document.body.classList.toggle('is-rec', s === 'rec');
   document.body.classList.toggle('is-paused', s === 'paused');
-  $('#status-text').textContent = s === 'rec' ? '녹음 중' : s === 'paused' ? '일시정지' : '대기 중';
+  const st = $('#status-text');
+  st.className = 'status-text';        // 미리 확인하며 물들인 색을 되돌린다
+  st.textContent = s === 'rec' ? '녹음 중' : s === 'paused' ? '일시정지' : '대기 중';
   $('#btn-main').setAttribute('aria-label', s === 'rec' ? '일시정지' : '녹음 시작');
   $('#ic-main').innerHTML = s === 'rec'
     ? '<rect x="7" y="5" width="3.5" height="14" rx="1"/><rect x="13.5" y="5" width="3.5" height="14" rx="1"/>'

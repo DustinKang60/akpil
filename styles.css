@@ -120,6 +120,10 @@ input{font:inherit}
 }
 .langbtn:disabled{opacity:.45}
 
+/* 앱을 켤 때 마이크를 확인하며 잠깐 쓰는 색 */
+.status-text.st-ok{color:var(--neon)}
+.status-text.st-bad{color:var(--rec)}
+
 body.is-rec .dot{background:var(--rec);animation:pulse 1.6s ease-in-out infinite}
 body.is-rec .status-text{color:var(--rec)}
 body.is-paused .dot{background:var(--amber)}
