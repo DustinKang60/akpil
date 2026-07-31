@@ -422,12 +422,36 @@ function gumWithTimeout(constraints, ms = 5000) {
 // 이유만으로 옮기면 엉뚱한 입력(스피커폰 등)을 잡는다. 그래서 다른 장치가
 // 기본보다 세 배 넘게 크게 들릴 때만 바꾸고, 아니면 기본으로 돌아온다.
 // 그래도 조용하면 바꾸지 않고, 녹음 중 음량 막대가 계속 알려준다.
+// 마이크가 도중에 멈추거나 끊기는 것을 지켜본다.
+// 블루투스 기기가 마이크를 가져가면 여기가 3초 무음 판정보다 먼저 울린다.
+function watchTrack(stream) {
+  const t = (stream.getAudioTracks() || [])[0];
+  if (!t) return;
+  let timer = null;
+  t.addEventListener('mute', () => {
+    clearTimeout(timer);
+    // 짧은 끊김은 흔하다. 2초 넘게 이어질 때만 알린다.
+    timer = setTimeout(() => {
+      if (t.muted && app.state === 'rec') {
+        toast('마이크가 멈췄습니다. 블루투스 이어폰·시계가 마이크를 가져갔을 수 있습니다.', 7000);
+      }
+    }, 2000);
+  });
+  t.addEventListener('unmute', () => clearTimeout(timer));
+  t.addEventListener('ended', () => {
+    if (app.state === 'rec') {
+      toast('마이크 연결이 끊겼습니다. 회의를 종료하고 다시 시작해 주세요.', 8000);
+    }
+  });
+}
+
 async function openMic() {
   const first = await gumWithTimeout({ audio: MIC_BASE });
   const firstPeak = await micPeak(first, 400);
   let best = first, bestPeak = firstPeak;
   app.micLabel = (first.getAudioTracks()[0] || {}).label || '기본 마이크';
-  if (firstPeak >= MIC_SILENT) return first;
+  app.micPeak = firstPeak;
+  if (firstPeak >= MIC_SILENT) { watchTrack(first); return first; }
 
   let devs = [];
   try {
@@ -451,20 +475,76 @@ async function openMic() {
     }
   }
 
+  app.micPeak = bestPeak;
   if (best !== first) {
     first.getTracks().forEach((t) => t.stop());
     toast(`마이크를 "${app.micLabel}" 로 바꿨습니다.`, 3500);
+    watchTrack(best);
     return best;
   }
 
   // 어느 것도 뚜렷하지 않다 — 방이 조용한 것일 수도 있으니 기본 마이크로 간다.
-  // 정말 무음이면 녹음 중 음량 막대가 3초 뒤부터 빨갛게 알려준다.
+  // 정말 무음이면 시작 전 안내창과 녹음 중 음량 칸이 알려준다.
+  watchTrack(first);
   return first;
+}
+
+/* ── 마이크가 살아 있는지 미리 보기 ── */
+// 회의가 끝나고서야 무음인 것을 알면 되돌릴 방법이 없다. 그래서 두 번 본다.
+// ① 앱을 켤 때 (권한이 이미 있을 때만 — 첫 실행에서 권한 창을 띄우지 않는다)
+// ② 시작 버튼을 눌렀을 때
+let micOverride = false;          // "그냥 시작"을 누른 경우 한 번만 통과시킨다
+
+function showMicSheet() { $('#mic-sheet').hidden = false; }
+function hideMicSheet() { $('#mic-sheet').hidden = true; }
+
+function dropStream() {
+  if (!app.stream) return;
+  app.stream.getTracks().forEach((t) => t.stop());
+  app.stream = null;
+}
+
+async function micPreflight() {
+  try {
+    const p = await navigator.permissions.query({ name: 'microphone' });
+    if (p.state !== 'granted') return;          // 권한이 없으면 조용히 넘어간다
+  } catch { return; }                           // 사파리처럼 못 물어보는 곳도 넘어간다
+
+  let s;
+  try { s = await gumWithTimeout({ audio: MIC_BASE }, 4000); } catch { return; }
+  const peak = await micPeak(s, 400);
+  s.getTracks().forEach((t) => t.stop());
+  if (peak >= MIC_SILENT) return;
+
+  $('#level').classList.add('is-silent');
+  toast('마이크에 소리가 안 들어옵니다. 블루투스 이어폰·시계의 통화 오디오를 꺼 주세요.', 7000);
+}
+
+// 소리 기기가 바뀌면(이어폰 연결 등) 회의 중에 곧바로 알린다.
+function watchDevices() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.addEventListener) return;
+  const snap = async () => {
+    try {
+      return (await navigator.mediaDevices.enumerateDevices())
+        .filter((d) => d.kind === 'audioinput').map((d) => d.deviceId).join('|');
+    } catch { return null; }
+  };
+  let known = null, toldAt = 0;
+  snap().then((v) => { known = v; });
+  navigator.mediaDevices.addEventListener('devicechange', async () => {
+    const now = await snap();
+    if (now === null || now === known) return;   // 안드로이드는 헛울림이 잦다
+    known = now;
+    if (app.state !== 'rec') return;
+    if (Date.now() - toldAt < 60000) return;     // 잔소리는 1분에 한 번
+    toldAt = Date.now();
+    toast('소리 기기가 바뀌었습니다. 상단 음량 칸이 움직이는지 확인해 주세요.', 7000);
+  });
 }
 
 async function startRecorder() {
   try {
-    app.stream = await openMic();
+    if (!app.stream) app.stream = await openMic();   // begin() 에서 이미 열어 두었다
     app.mime = pickMime();
     app.recorder = new MediaRecorder(app.stream, app.mime ? { mimeType: app.mime } : undefined);
     app.chunks = [];
@@ -571,7 +651,7 @@ function dgQuery() {
 
 async function startDeepgram() {
   try {
-    app.stream = await openMic();
+    if (!app.stream) app.stream = await openMic();   // begin() 에서 이미 열어 두었다
   } catch (err) {
     toast('마이크를 열지 못했습니다 — ' + (err && err.message || err), 6000);
     console.warn('mic:', err);
@@ -698,6 +778,22 @@ function setState(s) {
   renderLang();
 }
 
+$('#mic-retry').addEventListener('click', async () => {
+  hideMicSheet();
+  dropStream();                       // 새로 열어야 바뀐 경로가 반영된다
+  toast('다시 확인하는 중…', 2000);
+  begin();
+});
+$('#mic-anyway').addEventListener('click', () => {
+  hideMicSheet();
+  micOverride = true;
+  begin();
+});
+$('#mic-cancel').addEventListener('click', () => {
+  hideMicSheet();
+  dropStream();                       // 회의를 안 하니 마이크를 놓아준다
+});
+
 $('#btn-lang').addEventListener('click', () => {
   if (app.state === 'rec' || app.state === 'paused') {
     return toast('회의 중에는 언어를 바꿀 수 없습니다. 종료 후 바꿔 주세요.', 3500);
@@ -714,6 +810,19 @@ function startTick() {
 }
 
 async function begin() {
+  // 마이크부터 확보하고 소리가 들어오는지 본다. 무음이면 회의를 시작하지 않는다.
+  // 회의가 끝나고서야 무음인 걸 알면 그 회의는 되돌릴 수 없다.
+  if (SET.record || dgKey()) {
+    try {
+      if (!app.stream) app.stream = await openMic();
+    } catch (err) {
+      return toast('마이크를 열지 못했습니다 — ' + (err && err.message || err), 7000);
+    }
+    if (app.micPeak < MIC_SILENT && !micOverride) return showMicSheet();
+  }
+  micOverride = false;
+  $('#level').classList.remove('is-silent');
+
   app.startedAt = Date.now();
   setState('rec');
   startTick();
@@ -1410,6 +1519,10 @@ if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
   toast('기록을 되살렸습니다. 종료를 누르면 저장됩니다.', 3500);
   setState('paused');
 })();
+
+// 앱을 켤 때 마이크가 살아 있는지 미리 본다. 회의 시작 전에 알아야 고칠 수 있다.
+watchDevices();
+micPreflight();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));

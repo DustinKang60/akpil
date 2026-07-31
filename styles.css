@@ -333,6 +333,10 @@ body.is-rec .ctl-main{background:var(--rec);color:#2A0710}
 .sheet-title{
   margin:8px 4px 12px;font-size:13px;color:var(--text-3);text-align:center;
 }
+.sheet-note{
+  margin:0 4px 12px;font-size:13px;line-height:1.6;color:var(--text-2);
+}
+.sheet-note b{color:var(--text);font-weight:600}
 .sheet-item{
   width:100%;display:flex;align-items:center;gap:13px;
   padding:14px 12px;border-radius:var(--r-sm);
