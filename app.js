@@ -883,6 +883,15 @@ async function openList() {
       `${pad(d.getHours())}:${pad(d.getMinutes())} · ${Math.max(1, Math.round(r.dur / 60000))}분` +
       (r.audio ? ' · 녹음 있음' : '');
     main.append(h, p);
+
+    // 참석자도 보여준다. 목록에서 "누가 있던 회의였나"로 찾는 일이 많다.
+    if (r.people) {
+      const who = document.createElement('p');
+      who.className = 'who';
+      who.textContent = r.people;
+      who.title = r.people;              // 잘려도 길게 누르면 전체가 보인다
+      main.append(who);
+    }
     main.addEventListener('click', () => openSave(r, 'screen-list'));
 
     const del = document.createElement('button');
@@ -1216,24 +1225,71 @@ $('#btn-set-back').addEventListener('click', () => showScreen('screen-rec'));
 // ── 딥그램 키 ──
 // SET(akpil.set) 과 따로 둔다. 설정은 나중에 내보내거나 옮길 수 있는 값이고,
 // 키는 이 기기 밖으로 나가면 안 되는 값이라 섞지 않는다.
-function renderDgState() {
-  const k = dgKey();
+function dgSay(msg, kind) {
   const el = $('#dgkey-state');
   if (!el) return;
-  el.textContent = k
-    ? `넣었습니다 (${k.length}자) — 녹음과 받아쓰기가 함께 됩니다`
-    : '넣지 않음 — 브라우저 받아쓰기로 동작합니다 (녹음과 동시 사용 불가)';
+  el.textContent = msg;
+  el.className = kind ? 'dg-' + kind : '';
 }
 
-$('#set-dgkey').addEventListener('change', (e) => {
-  const k = e.target.value.trim();
-  if (k) localStorage.setItem('akpil.dgkey', k);
-  else localStorage.removeItem('akpil.dgkey');
-  renderDgState();
-  toast(k ? '딥그램 키를 이 폰에 저장했습니다.' : '딥그램 키를 지웠습니다.', 3000);
-});
+function renderDgState() {
+  const k = dgKey();
+  if (!k) return dgSay('넣지 않음 — 브라우저 받아쓰기로 동작합니다 (녹음과 동시 사용 불가)');
+  dgSay(`넣었습니다 (${k.length}자) — 녹음과 받아쓰기가 함께 됩니다`, 'ok');
+}
+
+// 키가 진짜 되는 것인지 딥그램에 한 번 붙어서 확인한다.
+// 붙여넣기만 하고 아무 반응이 없으면 제대로 한 것인지 알 수가 없다.
+function verifyDgKey(k) {
+  return new Promise((res) => {
+    let ws;
+    try { ws = new WebSocket(DG_URL + '?' + dgQuery(), ['token', k]); }
+    catch { return res('fail'); }
+    let done = false;
+    const settle = (v) => { if (!done) { done = true; res(v); } };
+    const giveUp = setTimeout(() => { try { ws.close(); } catch {} settle('timeout'); }, 8000);
+    ws.onopen = () => {
+      clearTimeout(giveUp);
+      try { ws.send(JSON.stringify({ type: 'CloseStream' })); ws.close(1000); } catch {}
+      settle('ok');
+    };
+    ws.onerror = () => { clearTimeout(giveUp); settle('fail'); };
+    ws.onclose = () => { clearTimeout(giveUp); settle('fail'); };
+  });
+}
+
+let dgTimer = null;
+async function onDgKeyTyped(raw) {
+  const k = raw.trim();
+  clearTimeout(dgTimer);
+
+  if (!k) {
+    localStorage.removeItem('akpil.dgkey');
+    renderDgState();
+    return;
+  }
+
+  localStorage.setItem('akpil.dgkey', k);          // 우선 저장부터 한다
+  dgSay(`${k.length}자 저장했습니다 · 확인하는 중…`);
+
+  // 붙여넣는 도중에 매번 접속하지 않도록 잠깐 기다린다
+  dgTimer = setTimeout(async () => {
+    if (!navigator.onLine) {
+      return dgSay(`${k.length}자 저장했습니다 · 인터넷이 없어 확인은 못 했습니다`, 'warn');
+    }
+    const r = await verifyDgKey(k);
+    if (dgKey() !== k) return;                     // 그새 또 바뀌었으면 버린다
+    if (r === 'ok') dgSay(`✓ 키가 확인됐습니다 — 녹음과 받아쓰기가 함께 됩니다`, 'ok');
+    else if (r === 'timeout') dgSay('딥그램이 응답하지 않습니다. 인터넷을 확인해 주세요', 'warn');
+    else dgSay('✗ 딥그램이 이 키를 받아주지 않습니다. 다시 확인해 주세요', 'bad');
+  }, 700);
+}
+
+$('#set-dgkey').addEventListener('input', (e) => onDgKeyTyped(e.target.value));
+$('#set-dgkey').addEventListener('change', (e) => onDgKeyTyped(e.target.value));
 
 $('#dgkey-clear').addEventListener('click', () => {
+  clearTimeout(dgTimer);
   localStorage.removeItem('akpil.dgkey');
   $('#set-dgkey').value = '';
   renderDgState();

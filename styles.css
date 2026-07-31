@@ -94,6 +94,11 @@ input{font:inherit}
 .elapsed{color:var(--text-2);font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
 .status-right{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--neon)}
 
+/* 딥그램 키 상태 — 붙여넣은 것이 제대로 된 것인지 그 자리에서 보이게 */
+.dg-ok{color:var(--neon)}
+.dg-warn{color:var(--amber)}
+.dg-bad{color:var(--rec)}
+
 /* 마이크 입력 음량 — 소리가 들어오고 있는지 그 자리에서 보이게.
    오른쪽 "화면 유지"와 부딪히지 않도록 40px 로 짧게 잡는다. */
 .level{
@@ -229,6 +234,9 @@ body.is-rec .ctl-main{background:var(--rec);color:#2A0710}
 .card h3{margin:0 0 3px;font-size:15px;font-weight:500;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .card p{margin:0;font-size:12px;color:var(--text-3)}
+/* 참석자는 한 줄만. 많으면 끝을 … 로 자른다 (목록이 길어지면 훑기 어렵다) */
+.card .who{margin:2px 0 0;font-size:12px;color:var(--text-2);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .card-del{color:var(--text-3);padding:4px;flex:none}
 .card-del .ic{width:17px;height:17px}
 
