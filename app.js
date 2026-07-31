@@ -369,34 +369,49 @@ function pickMime() {
 // 회의실에서 2~3m 떨어진 말소리를 잡음으로 보고 깎아낸다. 원본을 그대로 받는다.
 const MIC_BASE = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
 
-// 이 값보다 작으면 마이크가 소리를 안 보내는 것으로 본다.
-// 살아 있는 마이크는 조용한 방에서도 이보다 큰 잡음 바닥을 가진다.
-// 실측: 블루투스 시계가 마이크를 가로챘을 때 최대 진폭이 0.0001 이었다.
+// 음량 칸을 칠할 때 쓰는 "소리가 들어온다" 기준.
 const MIC_SILENT = 0.0005;
 
-// 스트림에 실제로 소리가 들어오는지 잠깐 재본다. 최대 진폭을 돌려준다.
-async function micPeak(stream, ms = 600) {
+// 마이크는 열자마자 소리를 주지 않는다. 갤럭시 A32 실측:
+//   열리는 데 127ms, 그런데 처음 400ms 는 샘플이 정확히 0,
+//   500ms 부터 값이 나오기 시작하고 810ms 에야 잡음 바닥을 넘었다.
+// 데우기 전에 재면 멀쩡한 마이크도 무음으로 오판한다. 실제로 그랬다.
+const MIC_WARMUP = 700;
+
+// 죽은 마이크를 가리는 기준은 진폭이 아니라 "값이 정확히 0 인 샘플의 비율"이다.
+//   살아 있는 마이크 (조용한 방)  5~8%
+//   블루투스에 뺏긴 마이크        98.9%
+// 진폭으로 가르려 했더니 조용한 방 실측(0.0005~0.002)이 임계값과 겹쳐 오탐이 났다.
+const MIC_DEAD_ZERO = 60;
+
+// 스트림에 소리가 들어오는지 데운 뒤에 재본다.
+async function micProbe(stream, ms = 1200) {
   const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) return 1;                       // 잴 수 없으면 통과시킨다
+  if (!AC) return { peak: 1, zeroPct: 0 };          // 잴 수 없으면 통과시킨다
   const ac = new AC();
   try {
     const an = ac.createAnalyser();
-    an.fftSize = 1024;
+    an.fftSize = 2048;
     ac.createMediaStreamSource(stream).connect(an);
     const buf = new Float32Array(an.fftSize);
-    let peak = 0;
+    await new Promise((r) => setTimeout(r, MIC_WARMUP));
+    let peak = 0, zero = 0, n = 0;
     const until = Date.now() + ms;
     while (Date.now() < until) {
       an.getFloatTimeDomainData(buf);
       for (let i = 0; i < buf.length; i++) {
         const v = Math.abs(buf[i]);
         if (v > peak) peak = v;
+        if (buf[i] === 0) zero++;
+        n++;
       }
-      await new Promise((r) => setTimeout(r, 40));
+      await new Promise((r) => setTimeout(r, 60));
     }
-    return peak;
-  } catch { return 1; } finally { try { ac.close(); } catch {} }
+    return { peak, zeroPct: n ? (zero / n) * 100 : 100 };
+  } catch { return { peak: 1, zeroPct: 0 }; } finally { try { ac.close(); } catch {} }
 }
+
+const micIsDead = (p) => p.zeroPct > MIC_DEAD_ZERO;
 
 // getUserMedia 는 응답을 아예 안 주고 멎을 수 있다.
 //
@@ -447,12 +462,13 @@ function watchTrack(stream) {
 
 async function openMic() {
   const first = await gumWithTimeout({ audio: MIC_BASE });
-  const firstPeak = await micPeak(first, 400);
-  let best = first, bestPeak = firstPeak;
+  const firstP = await micProbe(first, 900);
+  let best = first, bestP = firstP;
   app.micLabel = (first.getAudioTracks()[0] || {}).label || '기본 마이크';
-  app.micPeak = firstPeak;
-  if (firstPeak >= MIC_SILENT) { watchTrack(first); return first; }
+  app.micDead = micIsDead(firstP);
+  if (!app.micDead) { watchTrack(first); return first; }
 
+  // 기본 마이크가 죽어 있다 — 다른 입력 장치를 찾아본다
   let devs = [];
   try {
     devs = (await navigator.mediaDevices.enumerateDevices())
@@ -465,17 +481,17 @@ async function openMic() {
     try {
       s = await gumWithTimeout({ audio: { ...MIC_BASE, deviceId: { exact: d.deviceId } } }, 3000);
     } catch { continue; }
-    const p = await micPeak(s, 400);
-    if (p >= MIC_SILENT && p > bestPeak * 3) {
+    const p = await micProbe(s, 900);
+    if (!micIsDead(p)) {
       if (best !== first) best.getTracks().forEach((t) => t.stop());
-      best = s; bestPeak = p;
+      best = s; bestP = p;
       app.micLabel = d.label || '다른 마이크';
-    } else {
-      s.getTracks().forEach((t) => t.stop());
+      break;                                  // 살아 있는 것을 찾았으면 그만 본다
     }
+    s.getTracks().forEach((t) => t.stop());
   }
 
-  app.micPeak = bestPeak;
+  app.micDead = micIsDead(bestP);
   if (best !== first) {
     first.getTracks().forEach((t) => t.stop());
     toast(`마이크를 "${app.micLabel}" 로 바꿨습니다.`, 3500);
@@ -483,8 +499,6 @@ async function openMic() {
     return best;
   }
 
-  // 어느 것도 뚜렷하지 않다 — 방이 조용한 것일 수도 있으니 기본 마이크로 간다.
-  // 정말 무음이면 시작 전 안내창과 녹음 중 음량 칸이 알려준다.
   watchTrack(first);
   return first;
 }
@@ -512,9 +526,9 @@ async function micPreflight() {
 
   let s;
   try { s = await gumWithTimeout({ audio: MIC_BASE }, 4000); } catch { return; }
-  const peak = await micPeak(s, 400);
+  const p = await micProbe(s, 1500);           // 급할 것 없으니 넉넉히 잰다
   s.getTracks().forEach((t) => t.stop());
-  if (peak >= MIC_SILENT) return;
+  if (!micIsDead(p)) return;
 
   $('#level').classList.add('is-silent');
   toast('마이크에 소리가 안 들어옵니다. 블루투스 이어폰·시계의 통화 오디오를 꺼 주세요.', 7000);
@@ -818,10 +832,16 @@ async function begin() {
     } catch (err) {
       return toast('마이크를 열지 못했습니다 — ' + (err && err.message || err), 7000);
     }
-    if (app.micPeak < MIC_SILENT && !micOverride) return showMicSheet();
+    if (app.micDead && !micOverride) return showMicSheet();
   }
   micOverride = false;
   $('#level').classList.remove('is-silent');
+
+  // 지난 회의의 마지막 문단을 가리킨 채로 두면, 새 회의의 첫 확정 문장이
+  // 그 문단에 이어붙는다. 그 문단은 이미 저장이 끝난 지난 회의 것이라
+  // 화면에도 안 나오고 저장도 안 된다 — 받아쓴 글이 통째로 사라진다.
+  // 웹 음성인식 경로는 startRecognition() 이 비워줬지만 딥그램 경로는 안 부른다.
+  app.recogLast = null;
 
   app.startedAt = Date.now();
   setState('rec');
@@ -1139,6 +1159,7 @@ $('#btn-save-back').addEventListener('click', async () => {
   $('#player').pause();
   if (back === 'screen-list') return openList();   // 목록에서 왔으면 목록으로
   app.segments = [];
+  app.recogLast = null;      // 지난 회의 문단에 새 글이 붙지 않도록 함께 비운다
   app.accrued = 0;
   app.audioBlob = null;
   renderTranscript();
