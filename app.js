@@ -58,17 +58,29 @@ function loadSet() {
   let saved = {};
   try { saved = JSON.parse(localStorage.getItem('akpil.set') || '{}') || {}; } catch { /* 깨졌으면 기본값 */ }
   const s = Object.assign({}, DEFAULTS, saved);
-  // dict 는 배열이라 그냥 두면 DEFAULTS 의 것을 함께 쓰게 된다 → 기본값이 오염된다
-  s.dict = Array.isArray(s.dict) ? s.dict.map((r) => ({ from: String(r.from || ''), to: String(r.to || '') })) : [];
+  // dict 는 배열이라 그냥 두면 DEFAULTS 의 것을 함께 쓰게 된다 → 기본값이 오염된다.
+  // 예전에는 {from, to} 였다. 옛 값이 남아 있으면 바른 말(to) 만 가져온다.
+  s.dict = Array.isArray(s.dict)
+    ? s.dict.map((r) => String(r && typeof r === 'object' ? (r.to || r.from || '') : r).trim()).filter(Boolean)
+    : [];
   return s;
 }
 let SET = loadSet();
 function saveSet() { localStorage.setItem('akpil.set', JSON.stringify(SET)); }
 
-// 늘 틀리게 들리는 말을 바로잡는다. 긴 것부터 바꿔야 짧은 규칙이 먼저 먹지 않는다.
-function fixTerms(text) {
-  const rules = (SET.dict || []).filter((r) => r.from).sort((a, b) => b.from.length - a.from.length);
-  return rules.reduce((s, r) => s.split(r.from).join(r.to), text);
+// 용어 사전 — 회사 약어나 사람 이름을 딥그램에 미리 알려주는 목록.
+//
+// 예전에는 "들리는 대로 → 바른 말" 로 받아쓴 뒤에 고쳤다. 그 방식은 늦고 약하다.
+// 틀린 결과를 본 다음에야 규칙을 넣을 수 있고, 같은 말도 사람마다 다르게 들려서
+// 단어 하나에 규칙이 여러 개 필요했다 ("딥그램"이 뒷그램·댓글에·미끄럼으로 들렸다).
+// 바른 말을 미리 알려주면 딥그램이 그 말을 후보로 놓고 듣는다. 예방이 교정보다 낫다.
+const MAX_TERMS = 100;                    // 딥그램 한 요청당 상한
+
+function allTerms() {
+  const list = [...(SET.dict || []), ...loadSpeakers()]
+    .map((t) => String(t || '').trim())
+    .filter(Boolean);
+  return [...new Set(list)].slice(0, MAX_TERMS);   // 중복 제거
 }
 
 function applySet() {
@@ -212,7 +224,7 @@ function isGrowth(a, b) {
 // 화면·저장에는 (committed + active) 에 용어 교정을 입힌 것을 쓴다.
 function refreshSeg(seg) {
   const raw = norm(`${seg.committed} ${seg.active}`);
-  seg.text = fixTerms(raw);
+  seg.text = raw;
   const body = $('#transcript').querySelector(`.seg[data-id="${seg.id}"] .seg-body`);
   if (body) body.textContent = seg.text;
   else renderTranscript();
@@ -255,7 +267,7 @@ function ingestFinal(raw) {
     const s = {
       id: 's' + Date.now() + Math.random().toString(36).slice(2, 6),
       t: elapsedMs(), lastAt: elapsedMs(), speaker: app.speaker,
-      committed: '', active: raw, text: fixTerms(raw), mark: null,
+      committed: '', active: raw, text: raw, mark: null,
     };
     app.segments.push(s);
     app.recogLast = s;
@@ -268,7 +280,7 @@ function ingestFinal(raw) {
 function pushText(raw) {
   const s = {
     id: 's' + Date.now() + Math.random().toString(36).slice(2, 6),
-    t: elapsedMs(), lastAt: elapsedMs(), speaker: app.speaker, text: fixTerms(raw), mark: null,
+    t: elapsedMs(), lastAt: elapsedMs(), speaker: app.speaker, text: raw, mark: null,
   };
   app.segments.push(s);
   appendSeg(s);
@@ -677,10 +689,13 @@ const DG_URL = 'wss://api.deepgram.com/v1/listen';
 const dgKey = () => (localStorage.getItem('akpil.dgkey') || '').trim();
 
 function dgQuery() {
-  return new URLSearchParams({
+  const q = new URLSearchParams({
     model: 'nova-3', language: SET.lang === 'en' ? 'en' : 'ko',
     smart_format: 'true', punctuate: 'true', interim_results: 'true',
-  }).toString();
+  });
+  // 용어 사전과 참석자 이름을 미리 알려준다. 딥그램이 그 말을 후보로 놓고 듣는다.
+  allTerms().forEach((t) => q.append('keyterm', t));
+  return q.toString();
 }
 
 async function startDeepgram() {
@@ -1340,52 +1355,52 @@ $('#share-sheet').addEventListener('click', (e) => { if (e.target.id === 'share-
 
 /* ─────────── 설정 화면 ─────────── */
 // 참석자 목록. 화자 칩과 같은 저장소(akpil.speakers)를 공유한다.
+// 칩 하나를 만든다. onDel 이 없으면 지우기 단추 없이 흐리게 보여준다.
+function makeTag(text, onDel) {
+  const tag = document.createElement('span');
+  tag.className = 'tag' + (onDel ? '' : ' is-auto');
+  const label = document.createElement('span');
+  label.textContent = text;
+  tag.appendChild(label);
+  if (onDel) {
+    const del = document.createElement('button');
+    del.type = 'button';
+    del.setAttribute('aria-label', `"${text}" 삭제`);
+    del.innerHTML = '<svg viewBox="0 0 24 24" class="ic"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+    del.addEventListener('click', onDel);
+    tag.appendChild(del);
+  }
+  return tag;
+}
+
 function renderPeople() {
   const box = $('#people-list');
   box.innerHTML = '';
   loadSpeakers().forEach((name) => {
-    const row = document.createElement('div');
-    row.className = 'dict-item';
-    const label = document.createElement('span');
-    label.className = 'from'; label.textContent = name;
-    const del = document.createElement('button');
-    del.type = 'button';
-    del.setAttribute('aria-label', `"${name}" 삭제`);
-    del.innerHTML = '<svg viewBox="0 0 24 24" class="ic"><path d="M18 6 6 18M6 6l12 12"/></svg>';
-    del.addEventListener('click', () => {
+    box.appendChild(makeTag(name, () => {
       saveSpeakers(loadSpeakers().filter((n) => n !== name));
       if (app.speaker === name) app.speaker = '';   // 지운 사람이 지금 화자면 화자 없음으로
       renderPeople();
       renderSpeakers();
+      renderDict();                                 // 용어 사전 개수도 함께 줄어든다
       toast(`"${name}"을(를) 지웠습니다.`);
-    });
-    row.append(label, del);
-    box.appendChild(row);
+    }));
   });
 }
 
 function renderDict() {
   const box = $('#dict');
   box.innerHTML = '';
-  (SET.dict || []).forEach((r, i) => {
-    const row = document.createElement('div');
-    row.className = 'dict-item';
-    const from = document.createElement('span');
-    from.className = 'from'; from.textContent = r.from;
-    const arw = document.createElement('span');
-    arw.className = 'arrow'; arw.textContent = '→';
-    const to = document.createElement('span');
-    to.className = 'to'; to.textContent = r.to;
-    const del = document.createElement('button');
-    del.type = 'button';
-    del.setAttribute('aria-label', `"${r.from}" 규칙 삭제`);
-    del.innerHTML = '<svg viewBox="0 0 24 24" class="ic"><path d="M18 6 6 18M6 6l12 12"/></svg>';
-    del.addEventListener('click', () => {
-      SET.dict.splice(i, 1); saveSet(); renderDict();
-    });
-    row.append(from, arw, to, del);
-    box.appendChild(row);
+
+  (SET.dict || []).forEach((w, i) => {
+    box.appendChild(makeTag(w, () => { SET.dict.splice(i, 1); saveSet(); renderDict(); }));
   });
+
+  // 참석자 이름도 함께 보내진다. 여기서는 보여만 주고, 지우는 것은 참석자 쪽에서 한다.
+  loadSpeakers().forEach((name) => box.appendChild(makeTag(name)));
+
+  const btn = $('#dict-open');
+  if (btn) btn.textContent = `등록된 말 ${allTerms().length}개`;
 }
 
 function openSet() {
@@ -1522,22 +1537,27 @@ $('#set-size').addEventListener('input', (e) => {
 });
 
 $('#dict-add').addEventListener('click', () => {
-  const from = $('#dict-from').value.trim();
-  const to = $('#dict-to').value.trim();
-  if (!from || !to) return toast('양쪽을 다 채워 주세요.');
-  if (from === to) return toast('같은 말입니다.');
+  const w = $('#dict-word').value.trim();
+  if (!w) return toast('등록할 말을 적어 주세요.');
   SET.dict = SET.dict || [];
-  const dup = SET.dict.findIndex((r) => r.from === from);
-  if (dup >= 0) SET.dict[dup].to = to;
-  else SET.dict.push({ from, to });
+  if (allTerms().some((t) => t === w)) {
+    $('#dict-word').value = '';
+    return toast(`"${w}" 는 이미 있습니다.`);
+  }
+  if (allTerms().length >= MAX_TERMS) {
+    return toast(`한 번에 ${MAX_TERMS}개까지만 보낼 수 있습니다. 안 쓰는 말을 지워 주세요.`, 4500);
+  }
+  SET.dict.push(w);
   saveSet(); renderDict();
-  $('#dict-from').value = ''; $('#dict-to').value = '';
-  $('#dict-from').focus();
-  toast(`"${from}" → "${to}" 로 고칩니다.`);
+  $('#dict-word').value = '';
+  $('#dict-word').focus();
+  toast(`"${w}" 를 등록했습니다.`);
 });
-$('#dict-to').addEventListener('keydown', (e) => {
+$('#dict-word').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') $('#dict-add').click();
 });
+$('#dict-open').addEventListener('click', () => { renderDict(); $('#dict-sheet').hidden = false; });
+$('#dict-close').addEventListener('click', () => { $('#dict-sheet').hidden = true; });
 
 /* ─────────── 시작할 때 ─────────── */
 applySet();

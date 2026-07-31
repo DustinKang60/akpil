@@ -300,9 +300,8 @@ body.is-rec .ctl-main{background:var(--rec);color:#2A0710}
   background:var(--surface-2);border-radius:var(--r-sm);padding:9px 11px;
 }
 .dict-item span{font-size:14px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.dict-item .from{color:var(--text-3);flex:1}
-.dict-item .arrow{color:var(--text-3);flex:none}
-.dict-item .to{color:var(--neon);flex:1}
+.dict-item .word{color:var(--text);flex:1}
+.dict-item .who{color:var(--text-3);flex:none;font-size:12px}   /* 참석자에서 온 것 */
 .dict-item button{color:var(--text-3);flex:none;padding:2px}
 .dict-item button .ic{width:16px;height:16px}
 
@@ -319,6 +318,37 @@ body.is-rec .ctl-main{background:var(--rec);color:#2A0710}
   background:var(--surface-3);color:var(--neon);font-size:17px;
 }
 .dict-plus:active{transform:scale(.95)}
+
+/* 설명 끝에 붙는 작은 글자 단추. 개수를 적어 두어야 같은 말을 또 넣지 않는다. */
+.link-btn{
+  display:inline;padding:0 0 0 3px;background:none;border:0;
+  font-size:inherit;color:var(--neon);text-decoration:underline;
+  text-underline-offset:2px;
+}
+.link-btn:active{opacity:.6}
+
+/* 설정 안의 이름·말 목록. 한 줄에 하나씩 늘어놓으면 열 명만 넘어도 화면을 다 먹는다.
+   칩으로 감싸서 촘촘하게 보여준다. */
+.taglist{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.taglist:empty{display:none}
+.tag{
+  display:inline-flex;align-items:center;gap:4px;
+  background:var(--surface-2);border:1px solid var(--line);
+  border-radius:20px;padding:5px 7px 5px 11px;
+  font-size:13px;color:var(--text);max-width:100%;
+}
+.tag span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tag button{color:var(--text-3);flex:none;padding:0;display:flex;align-items:center}
+.tag button .ic{width:14px;height:14px}
+/* 참석자에서 자동으로 들어온 것 — 여기서는 못 지운다 */
+.tag.is-auto{color:var(--text-3);padding-right:11px;background:transparent}
+/* 시트 안에서는 목록이 길어질 수 있으니 스크롤 */
+#dict-sheet .dict{max-height:46vh;overflow-y:auto}
+#dict-sheet .dict:empty::after{
+  content:'아직 등록한 말이 없습니다.';
+  display:block;text-align:center;color:var(--text-3);font-size:13px;padding:18px 0;
+}
+#dict-sheet .dict:empty{display:block}
 
 .foot{text-align:center;font-size:11px;color:#3C424F;margin:18px 0 4px}
 

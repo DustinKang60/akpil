@@ -206,7 +206,7 @@
     <section class="group">
       <h2>참석자</h2>
       <p class="group-note">회의 중 화자 칩으로 쓸 이름입니다. 이름을 탭해 발언자를 붙입니다.</p>
-      <div class="dict" id="people-list"></div>
+      <div class="taglist" id="people-list"></div>
       <div class="dict-add">
         <input type="text" id="person-name" placeholder="이름" aria-label="참석자 이름">
         <button type="button" class="dict-plus" id="person-add" aria-label="추가">＋</button>
@@ -215,12 +215,11 @@
 
     <section class="group">
       <h2>용어 사전</h2>
-      <p class="group-note">회사 약어나 사람 이름처럼 늘 틀리게 들리는 말을 자동으로 고칩니다. 체감 정확도가 여기서 제일 크게 올라갑니다.</p>
-      <div class="dict" id="dict"></div>
+      <p class="group-note">회사 약어나 사람 이름처럼 잘못 듣기 쉬운 말을 미리 넣어 두세요. <b>바르게 적어 두면</b> 그 말을 먼저 알고 들어서 더 잘 알아듣습니다. 참석자 이름은 자동으로 함께 들어갑니다.
+        <button type="button" class="link-btn" id="dict-open">등록된 말 0개</button></p>
       <div class="dict-add">
-        <input type="text" id="dict-from" placeholder="들리는 대로" aria-label="틀리게 들리는 말">
-        <span class="arrow" aria-hidden="true">→</span>
-        <input type="text" id="dict-to" placeholder="바른 말" aria-label="바르게 고칠 말">
+        <input type="text" id="dict-word" placeholder="예: 정산팀" aria-label="등록할 말"
+               autocapitalize="off" spellcheck="false">
         <button type="button" class="dict-plus" id="dict-add" aria-label="추가">＋</button>
       </div>
     </section>
@@ -230,6 +229,15 @@
 </section>
 
 <!-- 공유 선택 시트 (녹음이 있을 때) -->
+<!-- 등록한 말 목록. 설정 화면에 죽 늘어놓으면 길어지므로 눌렀을 때만 보여준다. -->
+<div class="sheet-back" id="dict-sheet" hidden>
+  <div class="sheet" role="dialog" aria-labelledby="dict-sheet-title">
+    <p class="sheet-title" id="dict-sheet-title">등록된 말</p>
+    <div class="taglist" id="dict"></div>
+    <button type="button" class="sheet-cancel" id="dict-close">닫기</button>
+  </div>
+</div>
+
 <!-- 마이크가 무음일 때 회의를 시작하기 전에 막아 세운다.
      블루투스 이어폰·시계가 마이크를 가져가면 녹음이 통째로 무음이 되는데,
      회의가 끝나고서야 알게 되면 되돌릴 방법이 없다. -->
