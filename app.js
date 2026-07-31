@@ -52,7 +52,7 @@ const DB = {
 };
 
 /* ─────────── 설정 ─────────── */
-const DEFAULTS = { record: true, gap: 8, chips: true, size: 15, dict: [] };
+const DEFAULTS = { record: true, gap: 8, chips: true, size: 15, dict: [], lang: 'ko' };
 
 function loadSet() {
   let saved = {};
@@ -74,6 +74,7 @@ function fixTerms(text) {
 function applySet() {
   document.documentElement.style.setProperty('--seg-size', SET.size + 'px');
   $('#speakers').hidden = !SET.chips;
+  renderLang();
 }
 
 /* ─────────── 앱 상태 ─────────── */
@@ -294,7 +295,7 @@ function makeRecognizer() {
   if (!SR) return null;
 
   const r = new SR();
-  r.lang = 'ko-KR';
+  r.lang = SET.lang === 'en' ? 'en-US' : 'ko-KR';
   r.continuous = true;
   r.interimResults = true;
   r.maxAlternatives = 1;
@@ -484,6 +485,12 @@ async function startRecorder() {
 // 실제로 블루투스 시계가 마이크를 가로챈 것을 몇 시간 뒤에야 알아챘다.
 let meterCtx = null, meterTimer = null, quietSince = 0, quietToldAt = 0;
 
+// 사각형 다섯 개 중 n 칸을 켠다. 대기 중에는 0 칸이지만 자리는 늘 지킨다.
+function paintLevel(n) {
+  const boxes = $('#level').children;
+  for (let i = 0; i < boxes.length; i++) boxes[i].classList.toggle('on', i < n);
+}
+
 function startMeter(stream) {
   stopMeter();
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -494,9 +501,7 @@ function startMeter(stream) {
     an.fftSize = 1024;
     meterCtx.createMediaStreamSource(stream).connect(an);
     const buf = new Float32Array(an.fftSize);
-    const bar = $('#level'), fill = $('#level-fill');
-    bar.hidden = false;
-    $('#level-sep').hidden = false;
+    const bar = $('#level');
     quietSince = Date.now();
     quietToldAt = 0;
     meterTimer = setInterval(() => {
@@ -506,9 +511,9 @@ function startMeter(stream) {
         const v = Math.abs(buf[i]);
         if (v > peak) peak = v;
       }
-      // 진폭을 dB 로 바꿔 -60dB~0dB 를 0~100% 로 편다. 사람 귀에 맞는 눈금이다.
+      // 진폭을 dB 로 바꿔 -60dB~0dB 를 사각형 다섯 칸에 나눈다. 사람 귀에 맞는 눈금이다.
       const db = peak > 0 ? 20 * Math.log10(peak) : -99;
-      fill.style.width = Math.max(0, Math.min(100, (db + 60) / 60 * 100)) + '%';
+      paintLevel(db <= -60 ? 0 : Math.min(5, Math.ceil((db + 60) / 60 * 5)));
 
       if (peak >= MIC_SILENT) quietSince = Date.now();
       const quiet = Date.now() - quietSince > 3000;   // 3초 넘게 무음이면 경고
@@ -527,10 +532,8 @@ function stopMeter() {
   if (meterCtx) { try { meterCtx.close(); } catch {} meterCtx = null; }
   const bar = $('#level');
   if (!bar) return;
-  bar.hidden = true;
   bar.classList.remove('is-silent');
-  $('#level-sep').hidden = true;
-  $('#level-fill').style.width = '0';
+  paintLevel(0);
 }
 
 function stopRecorder() {
@@ -561,7 +564,7 @@ const dgKey = () => (localStorage.getItem('akpil.dgkey') || '').trim();
 
 function dgQuery() {
   return new URLSearchParams({
-    model: 'nova-3', language: 'ko',
+    model: 'nova-3', language: SET.lang === 'en' ? 'en' : 'ko',
     smart_format: 'true', punctuate: 'true', interim_results: 'true',
   }).toString();
 }
@@ -670,6 +673,16 @@ function startRecognition() {
   try { app.recog.start(); } catch { /* 이미 켜져 있으면 무시 */ }
 }
 
+// 받아쓰기 언어. 딥그램은 연결할 때 언어가 정해지므로 회의 중에는 못 바꾼다.
+// 도중에 바꾸려면 연결과 녹음기를 새로 시작해야 하고, 그러면 녹음 파일이
+// 두 조각으로 갈라져 재생이 깨진다. 그래서 대기 중에만 열어 둔다.
+function renderLang() {
+  const b = $('#btn-lang');
+  if (!b) return;
+  b.textContent = SET.lang === 'en' ? 'English' : '한국어';
+  b.disabled = app.state === 'rec' || app.state === 'paused';
+}
+
 function setState(s) {
   app.state = s;
   document.body.classList.toggle('is-rec', s === 'rec');
@@ -682,7 +695,18 @@ function setState(s) {
   ['#btn-mark', '#btn-todo', '#btn-edit', '#btn-stop'].forEach((sel) => {
     $(sel).disabled = s === 'idle';
   });
+  renderLang();
 }
+
+$('#btn-lang').addEventListener('click', () => {
+  if (app.state === 'rec' || app.state === 'paused') {
+    return toast('회의 중에는 언어를 바꿀 수 없습니다. 종료 후 바꿔 주세요.', 3500);
+  }
+  SET.lang = SET.lang === 'en' ? 'ko' : 'en';
+  saveSet();
+  renderLang();
+  toast(SET.lang === 'en' ? '영어로 받아씁니다.' : '한국어로 받아씁니다.', 2500);
+});
 
 function startTick() {
   clearInterval(app.tick);
