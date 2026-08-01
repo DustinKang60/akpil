@@ -52,12 +52,13 @@ const DB = {
 };
 
 /* ─────────── 설정 ─────────── */
-// 문단 나누기 눈금. 사람이 문장을 마치고 쉬는 건 보통 0.5~1초다.
-// 예전에는 2·3·5·8·15·30초였는데, 회의에서 3초를 쉬는 일은 없다.
-// 그 눈금으로는 침묵으로 문단이 나뉠 일이 없어 길이 상한만 혼자 일했다.
-const GAPS = [0.5, 1, 1.5, 2, 3];
+// 문단 나누기 눈금.
+// 짐작하지 말고 실측값에 맞춘다. 신문을 평소 속도로 읽을 때 문장 사이 침묵을
+// 딥그램 시각으로 재보니 0.00초와 0.32초였다. 0.5초 눈금으로는 아무것도 안 걸린다.
+// 예전 2·3·5·8·15·30초는 말할 것도 없다(3초 쉬면 방송사고).
+const GAPS = [0.3, 0.5, 0.8, 1.2, 2];
 
-const DEFAULTS = { record: true, gap: 1, chips: true, size: 15, dict: [], lang: 'ko' };
+const DEFAULTS = { record: true, gap: 0.5, chips: true, size: 15, dict: [], lang: 'ko' };
 
 function loadSet() {
   let saved = {};
@@ -268,7 +269,7 @@ function refreshSeg(seg) {
 // 한 문단이 끝없이 길어지지 않게 막는다.
 // 침묵으로만 나누면 쉼 없이 말할 때 안 끊긴다. 뉴스를 받아쓰니 3분치가 한
 // 덩어리가 됐다. 회의에서도 한 사람이 길게 설명하면 똑같다. 읽을 수가 없다.
-const MAX_SEG_CHARS = 250;
+const MAX_SEG_CHARS = 150;
 
 // 침묵은 "받은 시각"이 아니라 "녹음 속 시각"으로 재야 한다.
 //
@@ -283,13 +284,18 @@ const MAX_SEG_CHARS = 250;
 function ingestFinal(raw, at) {
   const last = app.recogLast;
   const sameSpeaker = last && last.speaker === app.speaker && !last.mark;
-  const grew = sameSpeaker && isGrowth(last.active, raw);
+  // "자란 발화" 판정은 브라우저 음성인식용이다. 그쪽은 한 발화를 자라는 채로
+  // 여러 번 보낸다. 딥그램은 문장을 한 번만 확정해 보내므로 이 판정이 필요 없고,
+  // 오히려 같은 말을 한참 뒤에 다시 해도 이어붙여 버린다. 딥그램일 때는 끈다.
+  const grew = !at && sameSpeaker && isGrowth(last.active, raw);
   const long = last && norm(`${last.committed} ${last.active}`).length >= MAX_SEG_CHARS;
 
+  // 소수점 오차 때문에 6.5 - 6.2 가 0.2999999998 로 나온다. 경계값에 딱 걸리면
+  // 끊겨야 할 것이 안 끊긴다. 0.01초 단위로 반올림해서 비교한다.
   const gapSec = !last ? 0
     : (at && typeof last.audioEnd === 'number')
-      ? at.start - last.audioEnd                       // 녹음 속 침묵 (초)
-      : (elapsedMs() - last.lastAt) / 1000;            // 잴 수 없으면 벽시계
+      ? Math.round((at.start - last.audioEnd) * 100) / 100   // 녹음 속 침묵 (초)
+      : (elapsedMs() - last.lastAt) / 1000;                  // 잴 수 없으면 벽시계
   // 자라는 발화는 거의 즉시 연속이므로 시간과 무관하게 이어간다.
   const within = sameSpeaker && !long && gapSec < SET.gap;
 
