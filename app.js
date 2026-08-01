@@ -247,8 +247,46 @@ function isGrowth(a, b) {
 //   committed = 이 문단에서 이미 끝난 발화들을 이어붙인 것
 //   active    = 지금 자라고 있는 마지막 발화
 // 화면·저장에는 (committed + active) 에 용어 교정을 입힌 것을 쓴다.
+// 한국어 큰 수를 읽을 수 있게 되돌린다.
+//
+// 딥그램은 "2조 7천억" 을 2700000000000 으로 펼쳐 놓는다. 숫자 정리(smart_format)가
+// 영어·스페인어 등 8개 언어만 지원하고 한국어는 목록에 없기 때문이다. 자릿수를
+// 세어야 읽히는 회의록은 쓸모가 없다. 그래서 만·억·조 로 다시 묶는다.
+//
+//   2700000000000 → 2조 7000억      150000000 → 1억 5000만
+//        400000000 → 4억           1850000000 → 18억 5000만
+//
+// 만(10000) 미만은 건드리지 않는다. 그래서 연도(2025)·나이·개수는 그대로 남는다.
+// 소수점이 붙은 것과 숫자·글자에 잇닿은 것도 건드리지 않는다(전화번호·제품번호).
+const KO_UNITS = [[1e12, '조'], [1e8, '억'], [1e4, '만']];
+
+function koNum(n) {
+  if (n < 10000) return String(n);
+  let out = '';
+  let rest = n;
+  for (const [size, name] of KO_UNITS) {
+    const q = Math.floor(rest / size);
+    if (q > 0) { out += (out ? ' ' : '') + q + name; rest -= q * size; }
+  }
+  if (rest > 0) out += (out ? ' ' : '') + rest;
+  return out;
+}
+
+function fixNumbers(text) {
+  return text.replace(/\d+/g, (m, at, whole) => {
+    const before = whole[at - 1] || '';
+    const after = whole[at + m.length] || '';
+    if (before === '.' || after === '.') return m;      // 소수점 (2.59)
+    if (/[\d:\-/]/.test(before) || /[\d:\-/]/.test(after)) return m;   // 전화·날짜·번호
+    const n = Number(m);
+    if (!Number.isFinite(n) || n < 10000) return m;     // 만 미만은 그대로 (연도 포함)
+    if (m.length > 16) return m;                        // 너무 길면 숫자가 아니라 식별자
+    return koNum(n);
+  });
+}
+
 function refreshSeg(seg) {
-  const raw = norm(`${seg.committed} ${seg.active}`);
+  const raw = fixNumbers(norm(`${seg.committed} ${seg.active}`));
   seg.text = raw;
   const body = $('#transcript').querySelector(`.seg[data-id="${seg.id}"] .seg-body`);
   if (body) body.textContent = seg.text;
@@ -322,7 +360,7 @@ function ingestFinal(raw, at) {
     const s = {
       id: 's' + Date.now() + Math.random().toString(36).slice(2, 6),
       t: elapsedMs(), lastAt: elapsedMs(), speaker: app.speaker,
-      committed: '', active: raw, text: raw, mark: null,
+      committed: '', active: raw, text: fixNumbers(raw), mark: null,
     };
     if (at) s.audioEnd = at.end;
     app.segments.push(s);
@@ -336,7 +374,7 @@ function ingestFinal(raw, at) {
 function pushText(raw) {
   const s = {
     id: 's' + Date.now() + Math.random().toString(36).slice(2, 6),
-    t: elapsedMs(), lastAt: elapsedMs(), speaker: app.speaker, text: raw, mark: null,
+    t: elapsedMs(), lastAt: elapsedMs(), speaker: app.speaker, text: fixNumbers(raw), mark: null,
   };
   app.segments.push(s);
   appendSeg(s);
