@@ -52,7 +52,12 @@ const DB = {
 };
 
 /* ─────────── 설정 ─────────── */
-const DEFAULTS = { record: true, gap: 3, chips: true, size: 15, dict: [], lang: 'ko', gapMoved: false };
+// 문단 나누기 눈금. 사람이 문장을 마치고 쉬는 건 보통 0.5~1초다.
+// 예전에는 2·3·5·8·15·30초였는데, 회의에서 3초를 쉬는 일은 없다.
+// 그 눈금으로는 침묵으로 문단이 나뉠 일이 없어 길이 상한만 혼자 일했다.
+const GAPS = [0.5, 1, 1.5, 2, 3];
+
+const DEFAULTS = { record: true, gap: 1, chips: true, size: 15, dict: [], lang: 'ko' };
 
 function loadSet() {
   let saved = {};
@@ -63,13 +68,9 @@ function loadSet() {
   s.dict = Array.isArray(s.dict)
     ? s.dict.map((r) => String(r && typeof r === 'object' ? (r.to || r.from || '') : r).trim()).filter(Boolean)
     : [];
-  // 문단 나누기 기본을 8초에서 3초로 낮췄다. 8초로는 쉼 없이 말할 때 한 문단이
-  // 끝없이 길어진다. 이미 8초로 저장된 기기는 예전 기본값을 그대로 쓰던 것이므로
-  // 한 번만 옮겨준다. 그 뒤에 직접 8초를 고르면 다시 건드리지 않는다.
-  if (!s.gapMoved) {
-    if (Number(s.gap) === 8) s.gap = 3;
-    s.gapMoved = true;
-  }
+  // 눈금이 바뀌었으므로 목록에 없는 옛 값(5·8·15·30초 등)은 기본값으로 되돌린다.
+  // 안 그러면 설정 화면의 선택칸이 빈칸으로 보인다.
+  if (!GAPS.includes(Number(s.gap))) s.gap = DEFAULTS.gap;
   return s;
 }
 let SET = loadSet();
@@ -1620,7 +1621,7 @@ toggle('#set-record', 'record', () => {
 toggle('#set-chips', 'chips', applySet);
 
 $('#set-gap').addEventListener('change', (e) => {
-  SET.gap = Number(e.target.value) || 8; saveSet();
+  SET.gap = Number(e.target.value) || DEFAULTS.gap; saveSet();
 });
 $('#set-size').addEventListener('input', (e) => {
   SET.size = Number(e.target.value);
