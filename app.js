@@ -966,12 +966,31 @@ function stopDeepgram() {
 
 /* ─────────── 화면 꺼짐 방지 ─────────── */
 async function acquireWakeLock() {
-  if (!('wakeLock' in navigator)) return;
+  if (!('wakeLock' in navigator)) return false;
   try {
     app.wakeLock = await navigator.wakeLock.request('screen');
     $('#wake-badge').hidden = false;
     app.wakeLock.addEventListener('release', () => { $('#wake-badge').hidden = true; });
-  } catch { /* 배터리 절약 모드 등에서 거부될 수 있다 */ }
+    return true;
+  } catch {
+    // 배터리 절약 모드에서 거부된다. 조용히 넘어가면 화면이 꺼지고,
+    // 화면이 꺼지면 마이크가 무음이 된다(실측). 회의가 끝나고서야 알게 된다.
+    return false;
+  }
+}
+
+// 화면 유지를 걸 수 있는지 미리 본다. 짐작하지 않고 의존하는 그 기능을 직접 시험한다.
+// 걸렸으면 곧바로 놓아준다 — 회의를 시작할 때 다시 건다.
+async function probeWakeLock() {
+  if (!('wakeLock' in navigator)) return true;      // 못 물어보는 곳은 통과시킨다
+  if (document.visibilityState !== 'visible') return true;
+  try {
+    const w = await navigator.wakeLock.request('screen');
+    await w.release();
+    return true;
+  } catch {
+    return false;
+  }
 }
 function releaseWakeLock() {
   if (app.wakeLock) { app.wakeLock.release().catch(() => {}); app.wakeLock = null; }
@@ -1049,6 +1068,24 @@ $('#mic-anyway').addEventListener('click', () => {
 $('#mic-cancel').addEventListener('click', () => {
   hideMicSheet();
   dropStream();                       // 회의를 안 하니 마이크를 놓아준다
+});
+
+/* ── 화면 유지 경고 ── */
+// 앱을 켤 때 한 번만 본다. 시작 버튼을 누른 뒤는 이미 회의가 시작된 순간이라
+// 거기서 막아 세우면 방해가 된다. 미리 알려주면 될 일이다.
+const hideWakeSheet = () => { $('#wake-sheet').hidden = true; };
+
+$('#wake-retry').addEventListener('click', async () => {
+  if (await probeWakeLock()) {
+    hideWakeSheet();
+    toast('이제 화면이 꺼지지 않습니다.', 3000);
+  } else {
+    toast('아직 걸지 못했습니다. 배터리 절약 모드를 확인해 주세요.', 4000);
+  }
+});
+$('#wake-ok').addEventListener('click', hideWakeSheet);
+$('#wake-sheet').addEventListener('click', (e) => {
+  if (e.target.id === 'wake-sheet') hideWakeSheet();
 });
 
 $('#btn-hide').addEventListener('click', showBlackout);
@@ -1807,9 +1844,15 @@ if (!(window.SpeechRecognition || window.webkitSpeechRecognition)) {
   setState('paused');
 })();
 
-// 앱을 켤 때 마이크가 살아 있는지 미리 본다. 회의 시작 전에 알아야 고칠 수 있다.
+// 앱을 켤 때 마이크가 살아 있는지, 화면 유지를 걸 수 있는지 미리 본다.
+// 회의 시작 전에 알아야 고칠 수 있다. 시작 버튼을 누른 뒤는 늦다.
 watchDevices();
-micPreflight();
+(async () => {
+  await micPreflight();
+  // 마이크 경고가 이미 떠 있으면 그것부터 보시게 두고 겹쳐 띄우지 않는다.
+  if (!$('#mic-sheet').hidden) return;
+  if (!(await probeWakeLock())) $('#wake-sheet').hidden = false;
+})();
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
