@@ -58,7 +58,10 @@ const DB = {
 // 예전 2·3·5·8·15·30초는 말할 것도 없다(3초 쉬면 방송사고).
 const GAPS = [0.3, 0.5, 0.8, 1.2, 2];
 
-const DEFAULTS = { record: true, gap: 0.5, chips: true, size: 15, dict: [], lang: 'ko' };
+// 증폭 세기. 배율은 리미터 뒤에서 곱하므로 큰 소리는 찢어지지 않고 눌린다.
+const BOOSTS = { off: 0, low: 4, mid: 10, high: 20 };
+
+const DEFAULTS = { record: true, gap: 0.5, chips: true, size: 15, dict: [], lang: 'ko', boost: 'off' };
 
 function loadSet() {
   let saved = {};
@@ -581,6 +584,7 @@ function dropStream() {
   if (!app.stream) return;
   app.stream.getTracks().forEach((t) => t.stop());
   app.stream = null;
+  stopBoost();
 }
 
 // 상태 줄의 "대기 중" 자리를 잠깐 빌려 쓴다. 대기 중일 때만 바꾸고,
@@ -641,15 +645,90 @@ function watchDevices() {
   });
 }
 
+/* ─────────── 목소리 증폭 ─────────── */
+// 멀리 앉은 사람 목소리를 키운다. 저역 차단 → 배율 → 리미터 순서다.
+//
+// 배율만 곱하면 큰 소리가 찢어진다(그래서 안드로이드 예제도 클리핑 처리를 넣는다).
+// 다만 값을 최대치로 자르는 방식은 소리를 뭉갠다. 여기서는 리미터로 부드럽게
+// 눌러 담는다 — 작은 소리는 배율대로 커지고, 큰 소리만 천장에서 눌린다.
+// 그래서 입력이 크든 작든 안전하다.
+//
+// 원본 마이크 트랙은 건드리지 않는다. 가공한 새 스트림을 따로 만들어
+// 녹음·딥그램·음량 칸이 모두 그것을 쓴다(보이는 것과 담기는 것이 같아야 한다).
+let boostCtx = null;
+
+function stopBoost() {
+  if (boostCtx) { try { boostCtx.close(); } catch { /* 이미 닫혔으면 그만 */ } boostCtx = null; }
+  app.boosted = null;
+  app.boostedFrom = null;
+}
+
+function makeBoostedStream(stream) {
+  const mult = BOOSTS[SET.boost] || 0;
+  if (!mult) return stream;                       // 꺼져 있으면 원본 그대로
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return stream;
+  try {
+    boostCtx = new AC();
+    const src = boostCtx.createMediaStreamSource(stream);
+
+    const hp = boostCtx.createBiquadFilter();     // 에어컨 웅웅거림·책상 진동을 걷어낸다
+    hp.type = 'highpass';
+    hp.frequency.value = 80;
+
+    const gain = boostCtx.createGain();
+    gain.gain.value = mult;
+
+    const lim = boostCtx.createDynamicsCompressor();   // 천장 — 찢어짐 방지
+    lim.threshold.value = -12;
+    lim.knee.value = 6;
+    lim.ratio.value = 20;                         // 사실상 리미터
+    lim.attack.value = 0.003;
+    lim.release.value = 0.15;
+
+    // 리미터만으로는 새는 소리가 있다. 실측에서 큰 소리가 +1.4 dBFS 까지 넘었다.
+    // tanh 곡선으로 마지막에 한 번 더 눌러 1.0 을 넘지 못하게 못박는다.
+    // 자르는 것이 아니라 휘게 하는 것이라 소리가 뭉개지지 않는다.
+    const soft = boostCtx.createWaveShaper();
+    const N = 2048;
+    const curve = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      const x = (i / (N - 1)) * 2 - 1;            // -1 … +1
+      curve[i] = Math.tanh(x * 1.5) / Math.tanh(1.5);
+    }
+    soft.curve = curve;
+    soft.oversample = '2x';
+
+    const dst = boostCtx.createMediaStreamDestination();
+    src.connect(hp); hp.connect(gain); gain.connect(lim); lim.connect(soft); soft.connect(dst);
+    return dst.stream;
+  } catch (err) {
+    console.warn('boost:', err);                  // 실패하면 원본으로 간다
+    stopBoost();
+    return stream;
+  }
+}
+
+// 녹음·딥그램·음량 칸이 함께 쓸 스트림. 증폭이 꺼져 있으면 원본과 같다.
+function outStream() {
+  if (!app.stream) return null;
+  if (app.boosted && app.boostedFrom === app.stream) return app.boosted;
+  stopBoost();
+  app.boosted = makeBoostedStream(app.stream);
+  app.boostedFrom = app.stream;
+  return app.boosted;
+}
+
 async function startRecorder() {
   try {
     if (!app.stream) app.stream = await openMic();   // begin() 에서 이미 열어 두었다
+    const out = outStream();
     app.mime = pickMime();
-    app.recorder = new MediaRecorder(app.stream, app.mime ? { mimeType: app.mime } : undefined);
+    app.recorder = new MediaRecorder(out, app.mime ? { mimeType: app.mime } : undefined);
     app.chunks = [];
     app.recorder.ondataavailable = (e) => { if (e.data && e.data.size) app.chunks.push(e.data); };
     app.recorder.start(4000);
-    startMeter(app.stream);
+    startMeter(out);
     return true;
   } catch (err) {
     app.recorder = null;
@@ -786,8 +865,9 @@ async function startDeepgram() {
 
     ws.onopen = () => {
       clearTimeout(giveUp);
+      const out = outStream();        // 증폭이 켜져 있으면 가공된 소리를 쓴다
       app.mime = pickMime();
-      app.recorder = new MediaRecorder(app.stream, app.mime ? { mimeType: app.mime } : undefined);
+      app.recorder = new MediaRecorder(out, app.mime ? { mimeType: app.mime } : undefined);
       app.chunks = [];
       app.recorder.ondataavailable = (e) => {
         if (!e.data || !e.data.size) return;
@@ -799,7 +879,7 @@ async function startDeepgram() {
       app.dgAlive = setInterval(() => {
         if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'KeepAlive' }));
       }, 5000);
-      startMeter(app.stream);
+      startMeter(outStream());
       settle(true);
     };
 
@@ -990,7 +1070,7 @@ async function begin() {
   if (dgKey()) {
     if (await startDeepgram()) { app.engine = 'dg'; return; }
     stopDeepgram();
-    if (app.stream) { app.stream.getTracks().forEach((t) => t.stop()); app.stream = null; }
+    if (app.stream) { app.stream.getTracks().forEach((t) => t.stop()); app.stream = null; stopBoost(); }
     toast('딥그램에 연결하지 못했습니다. 기존 받아쓰기로 진행합니다.', 5000);
   }
 
@@ -1029,13 +1109,13 @@ function resume() {
 
   if (app.engine === 'dg') {
     // 딥그램은 연결을 KeepAlive 로 붙잡아 뒀다. 조각만 다시 흘려보내면 된다.
-    if (app.recorder && app.recorder.state === 'paused') { app.recorder.resume(); startMeter(app.stream); }
+    if (app.recorder && app.recorder.state === 'paused') { app.recorder.resume(); startMeter(outStream()); }
   } else {
     if (!app.recog) app.recog = makeRecognizer();   // 초안을 되살린 직후엔 아직 없다
     if (!app.recog) return toast('이 브라우저는 음성 인식을 지원하지 않습니다.', 4000);
     // 일시정지 중에도 마이크 스트림은 살아 있으므로 재개는 순서를 따질 필요가 없다.
     startRecognition();
-    if (app.recorder && app.recorder.state === 'paused') { app.recorder.resume(); startMeter(app.stream); }
+    if (app.recorder && app.recorder.state === 'paused') { app.recorder.resume(); startMeter(outStream()); }
     else if (!app.recorder && SET.record) startRecorder();
   }
   setState('rec');
@@ -1052,7 +1132,7 @@ async function finish() {
   stopMeter();
 
   const blob = await stopRecorder();
-  if (app.stream) { app.stream.getTracks().forEach((t) => t.stop()); app.stream = null; }
+  if (app.stream) { app.stream.getTracks().forEach((t) => t.stop()); app.stream = null; stopBoost(); }
   app.audioBlob = blob;
 
   if (!app.segments.length && !blob) {
@@ -1509,6 +1589,7 @@ function openSet() {
   sw($('#set-record'), SET.record);
   sw($('#set-chips'), SET.chips);
   $('#set-gap').value = String(SET.gap);
+  $('#set-boost').value = BOOSTS[SET.boost] !== undefined ? SET.boost : 'off';
   $('#set-size').value = String(SET.size);
   $('#size-out').textContent = SET.size + 'px';
   renderPeople();
@@ -1628,6 +1709,12 @@ toggle('#set-chips', 'chips', applySet);
 
 $('#set-gap').addEventListener('change', (e) => {
   SET.gap = Number(e.target.value) || DEFAULTS.gap; saveSet();
+});
+$('#set-boost').addEventListener('change', (e) => {
+  SET.boost = BOOSTS[e.target.value] !== undefined ? e.target.value : 'off';
+  saveSet();
+  // 회의 중에 바꾸면 이미 만들어 둔 체인이 남아 있다. 다음 회의부터 적용된다.
+  if (app.state !== 'idle') toast('다음 회의부터 적용됩니다.', 3000);
 });
 $('#set-size').addEventListener('input', (e) => {
   SET.size = Number(e.target.value);
