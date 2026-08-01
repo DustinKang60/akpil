@@ -269,24 +269,43 @@ function refreshSeg(seg) {
 // 덩어리가 됐다. 회의에서도 한 사람이 길게 설명하면 똑같다. 읽을 수가 없다.
 const MAX_SEG_CHARS = 250;
 
-function ingestFinal(raw) {
+// 침묵은 "받은 시각"이 아니라 "녹음 속 시각"으로 재야 한다.
+//
+// 딥그램은 한 문장을 확정해 보낸 뒤 다음 문장까지 2~4초가 걸린다. 그건 처리하고
+// 보내는 데 걸린 시간이지 화자가 쉰 시간이 아니다. 받은 시각으로 재면 그 시간이
+// 침묵으로 둔갑한다. 그래서 8초로 두면 신문을 다 읽도록 한 문단이었고, 2초로
+// 낮추니 쉬지 않고 읽는데도 문장마다 문단이 쪼개졌다. 중간값이 없었다.
+//
+// 딥그램은 응답마다 그 말이 녹음의 몇 초 지점에서 시작해(start) 얼마나
+// 이어졌는지(duration)를 함께 준다. 그것으로 재면 진짜 침묵이 나온다.
+// at 이 없으면(브라우저 받아쓰기) 예전처럼 벽시계로 잰다.
+function ingestFinal(raw, at) {
   const last = app.recogLast;
   const sameSpeaker = last && last.speaker === app.speaker && !last.mark;
   const grew = sameSpeaker && isGrowth(last.active, raw);
-  // 자라는 발화는 거의 즉시 연속이므로 시간과 무관하게 이어간다.
-  // 침묵 판정은 "새 발화"에만 적용한다.
   const long = last && norm(`${last.committed} ${last.active}`).length >= MAX_SEG_CHARS;
-  const within = sameSpeaker && !long && (elapsedMs() - last.lastAt) < SET.gap * 1000;
+
+  const gapSec = !last ? 0
+    : (at && typeof last.audioEnd === 'number')
+      ? at.start - last.audioEnd                       // 녹음 속 침묵 (초)
+      : (elapsedMs() - last.lastAt) / 1000;            // 잴 수 없으면 벽시계
+  // 자라는 발화는 거의 즉시 연속이므로 시간과 무관하게 이어간다.
+  const within = sameSpeaker && !long && gapSec < SET.gap;
+
+  const mark = (seg) => {
+    seg.lastAt = elapsedMs();
+    if (at) seg.audioEnd = at.end;
+  };
 
   if (grew) {
     if (norm(raw).length >= norm(last.active).length) last.active = raw;   // 더 긴 쪽으로 교체
-    last.lastAt = elapsedMs();
+    mark(last);
     refreshSeg(last);
     $('#transcript').scrollTop = $('#transcript').scrollHeight;
   } else if (sameSpeaker && within) {
     last.committed = norm(`${last.committed} ${last.active}`);             // 진행 발화 확정분으로 편입
     last.active = raw;
-    last.lastAt = elapsedMs();
+    mark(last);
     refreshSeg(last);
     $('#transcript').scrollTop = $('#transcript').scrollHeight;
   } else {
@@ -295,6 +314,7 @@ function ingestFinal(raw) {
       t: elapsedMs(), lastAt: elapsedMs(), speaker: app.speaker,
       committed: '', active: raw, text: raw, mark: null,
     };
+    if (at) s.audioEnd = at.end;
     app.segments.push(s);
     app.recogLast = s;
     appendSeg(s);
@@ -786,7 +806,11 @@ async function startDeepgram() {
       if (!txt) { if (el) el.textContent = ''; return; }
       if (m.is_final) {
         if (el) el.textContent = '';
-        ingestFinal(txt);
+        // 이 말이 녹음의 몇 초 지점에서 시작해 얼마나 이어졌는지. 침묵을 이걸로 잰다.
+        const at = typeof m.start === 'number'
+          ? { start: m.start, end: m.start + (typeof m.duration === 'number' ? m.duration : 0) }
+          : null;
+        ingestFinal(txt, at);
       } else if (el) {
         el.textContent = txt;
         $('#transcript').scrollTop = $('#transcript').scrollHeight;
@@ -858,8 +882,9 @@ function renderLang() {
 function showBlackout() {
   const b = $('#blackout'), hint = $('#blackout-hint');
   b.hidden = false;
+  blackoutAt = Date.now();
   hint.classList.remove('gone');
-  setTimeout(() => hint.classList.add('gone'), 1500);
+  setTimeout(() => hint.classList.add('gone'), 900);
 }
 function hideBlackout() {
   const b = $('#blackout');
@@ -903,13 +928,14 @@ $('#mic-cancel').addEventListener('click', () => {
 
 $('#btn-hide').addEventListener('click', showBlackout);
 
-// 풀 때는 길게 눌러야 한다. 두 번 누르기로 하면 폰을 엎어두거나 스칠 때 풀린다.
-let holdTimer = null;
-const blk = $('#blackout');
-const holdStart = () => { clearTimeout(holdTimer); holdTimer = setTimeout(hideBlackout, 1000); };
-const holdEnd = () => clearTimeout(holdTimer);
-blk.addEventListener('pointerdown', holdStart);
-['pointerup', 'pointercancel', 'pointerleave'].forEach((e) => blk.addEventListener(e, holdEnd));
+// 살짝 건드리면 바로 돌아온다. 회의 중에 길게 누르고 있을 여유는 없다.
+// 들어간 직후 잠깐은 안 받는다 — [숨김] 을 누른 손가락이 그대로 이어져
+// 곧바로 풀려버리는 것을 막는다.
+let blackoutAt = 0;
+$('#blackout').addEventListener('pointerdown', () => {
+  if (Date.now() - blackoutAt < 400) return;
+  hideBlackout();
+});
 
 $('#btn-lang').addEventListener('click', () => {
   if (app.state === 'rec' || app.state === 'paused') {
