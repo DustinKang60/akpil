@@ -46,10 +46,11 @@
       ><i></i><i></i><i></i><i></i><i></i></span>
       <button type="button" class="langbtn" id="btn-lang"
               aria-label="받아쓰기 언어 바꾸기">한국어</button>
+      <button type="button" class="langbtn" id="btn-hide" hidden
+              aria-label="화면 숨기기">숨김</button>
     </div>
-    <div class="status-right" id="wake-badge" hidden>
+    <div class="status-right" id="wake-badge" hidden aria-label="화면 유지 중">
       <svg viewBox="0 0 24 24" class="ic-sm"><path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-4 12.7V17h8v-2.3A7 7 0 0 0 12 2z"/></svg>
-      화면 유지
     </div>
   </div>
 
@@ -184,9 +185,11 @@
       <div class="row">
         <div class="row-txt">
           <p>문단 나누기</p>
-          <small>같은 사람이라도 이만큼 말이 끊기면 새 문단으로 넘깁니다.</small>
+          <small>같은 사람이라도 이만큼 말이 끊기면 새 문단으로 넘깁니다. 쉬지 않고 말하면 길이를 보고 알아서 끊습니다.</small>
         </div>
         <select id="set-gap" aria-label="문단 나누기 간격">
+          <option value="2">2초</option>
+          <option value="3">3초</option>
           <option value="5">5초</option>
           <option value="8">8초</option>
           <option value="15">15초</option>
@@ -229,6 +232,15 @@
 </section>
 
 <!-- 공유 선택 시트 (녹음이 있을 때) -->
+<!-- 숨김 화면. 회의 중 화면을 끄면 안드로이드가 마이크를 막아 녹음이 무음이
+     된다(실측). 그래서 화면은 켜 두되 완전한 검정으로 덮는다. AMOLED 에서는
+     검정이면 픽셀이 꺼져 빛도 안 새고 배터리도 덜 쓴다. -->
+<div class="blackout" id="blackout" hidden role="button" tabindex="0"
+     aria-label="숨김 화면. 길게 눌러 돌아갑니다">
+  <p class="blackout-hint" id="blackout-hint">길게 눌러 돌아오기</p>
+  <span class="blackout-warn" id="blackout-warn" hidden aria-label="소리가 안 들어옵니다"></span>
+</div>
+
 <!-- 등록한 말 목록. 설정 화면에 죽 늘어놓으면 길어지므로 눌렀을 때만 보여준다. -->
 <div class="sheet-back" id="dict-sheet" hidden>
   <div class="sheet" role="dialog" aria-labelledby="dict-sheet-title">

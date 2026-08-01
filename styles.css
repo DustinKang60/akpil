@@ -120,6 +120,25 @@ input{font:inherit}
 }
 .langbtn:disabled{opacity:.45}
 
+/* 숨김 화면 — 완전한 검정. AMOLED 에서는 픽셀이 꺼진다. */
+.blackout{
+  position:fixed;inset:0;z-index:80;background:#000;
+  display:flex;align-items:center;justify-content:center;
+  -webkit-tap-highlight-color:transparent;
+}
+.blackout-hint{
+  margin:0;color:#1A1A1A;font-size:13px;letter-spacing:.05em;
+  transition:opacity 1s ease;
+}
+.blackout-hint.gone{opacity:0}
+/* 소리가 안 들어올 때만 구석에 아주 흐리게 깜빡인다 */
+.blackout-warn{
+  position:absolute;right:14px;bottom:calc(var(--safe-b) + 14px);
+  width:7px;height:7px;border-radius:50%;background:#5A0F1C;
+  animation:pulse 1.4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion:reduce){.blackout-warn{animation:none}}
+
 /* 앱을 켤 때 마이크를 확인하며 잠깐 쓰는 색 */
 .status-text.st-ok{color:var(--neon)}
 .status-text.st-bad{color:var(--rec)}

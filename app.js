@@ -52,7 +52,7 @@ const DB = {
 };
 
 /* ─────────── 설정 ─────────── */
-const DEFAULTS = { record: true, gap: 8, chips: true, size: 15, dict: [], lang: 'ko' };
+const DEFAULTS = { record: true, gap: 3, chips: true, size: 15, dict: [], lang: 'ko', gapMoved: false };
 
 function loadSet() {
   let saved = {};
@@ -63,10 +63,18 @@ function loadSet() {
   s.dict = Array.isArray(s.dict)
     ? s.dict.map((r) => String(r && typeof r === 'object' ? (r.to || r.from || '') : r).trim()).filter(Boolean)
     : [];
+  // 문단 나누기 기본을 8초에서 3초로 낮췄다. 8초로는 쉼 없이 말할 때 한 문단이
+  // 끝없이 길어진다. 이미 8초로 저장된 기기는 예전 기본값을 그대로 쓰던 것이므로
+  // 한 번만 옮겨준다. 그 뒤에 직접 8초를 고르면 다시 건드리지 않는다.
+  if (!s.gapMoved) {
+    if (Number(s.gap) === 8) s.gap = 3;
+    s.gapMoved = true;
+  }
   return s;
 }
 let SET = loadSet();
 function saveSet() { localStorage.setItem('akpil.set', JSON.stringify(SET)); }
+saveSet();                       // 위에서 옮긴 값을 바로 굳혀 둔다
 
 // 용어 사전 — 회사 약어나 사람 이름을 딥그램에 미리 알려주는 목록.
 //
@@ -256,13 +264,19 @@ function refreshSeg(seg) {
 //   - 같은 화자라도 SET.gap 초 넘게 말이 끊김 (한 문단이 끝없이 길어지는 것 방지)
 // 이어 붙일 때, 방금 온 문장이 진행 중 발화가 자란 것(접두사)이면 active 를
 // 교체하고, 새로운 발화면 이전 active 를 committed 로 넘긴 뒤 이어 붙인다.
+// 한 문단이 끝없이 길어지지 않게 막는다.
+// 침묵으로만 나누면 쉼 없이 말할 때 안 끊긴다. 뉴스를 받아쓰니 3분치가 한
+// 덩어리가 됐다. 회의에서도 한 사람이 길게 설명하면 똑같다. 읽을 수가 없다.
+const MAX_SEG_CHARS = 250;
+
 function ingestFinal(raw) {
   const last = app.recogLast;
   const sameSpeaker = last && last.speaker === app.speaker && !last.mark;
   const grew = sameSpeaker && isGrowth(last.active, raw);
   // 자라는 발화는 거의 즉시 연속이므로 시간과 무관하게 이어간다.
   // 침묵 판정은 "새 발화"에만 적용한다.
-  const within = sameSpeaker && (elapsedMs() - last.lastAt) < SET.gap * 1000;
+  const long = last && norm(`${last.committed} ${last.active}`).length >= MAX_SEG_CHARS;
+  const within = sameSpeaker && !long && (elapsedMs() - last.lastAt) < SET.gap * 1000;
 
   if (grew) {
     if (norm(raw).length >= norm(last.active).length) last.active = raw;   // 더 긴 쪽으로 교체
@@ -656,6 +670,7 @@ function startMeter(stream) {
       if (peak >= MIC_SILENT) quietSince = Date.now();
       const quiet = Date.now() - quietSince > 3000;   // 3초 넘게 무음이면 경고
       bar.classList.toggle('is-silent', quiet);
+      $('#blackout-warn').hidden = !quiet;            // 숨김 화면에서도 알 수 있게
       if (quiet && Date.now() - quietToldAt > 60000) {   // 잔소리는 1분에 한 번만
         quietToldAt = Date.now();
         toast('마이크에 소리가 안 들어옵니다. 블루투스 이어폰·시계의 통화 오디오를 꺼 주세요.', 5000);
@@ -835,8 +850,26 @@ function renderLang() {
   b.disabled = app.state === 'rec' || app.state === 'paused';
 }
 
+/* ─────────── 숨김 화면 ─────────── */
+// 회의 중 화면을 끄면 안드로이드가 백그라운드 앱의 마이크를 막는다. 실측:
+// 화면을 끈 순간부터 녹음이 샘플 전부 0 인 완전 무음이 됐고, 켜자마자 돌아왔다.
+// 설치된 앱에서도, 배터리 제한을 풀어도 같았다. 웹 앱에는 이를 피할 수단이 없다.
+// 그래서 화면은 켜 두고(Wake Lock 유지) 검정으로 덮는다.
+function showBlackout() {
+  const b = $('#blackout'), hint = $('#blackout-hint');
+  b.hidden = false;
+  hint.classList.remove('gone');
+  setTimeout(() => hint.classList.add('gone'), 1500);
+}
+function hideBlackout() {
+  const b = $('#blackout');
+  if (b) b.hidden = true;
+}
+
 function setState(s) {
   app.state = s;
+  $('#btn-hide').hidden = s !== 'rec';        // 숨길 것이 있을 때만 보인다
+  if (s !== 'rec') hideBlackout();
   document.body.classList.toggle('is-rec', s === 'rec');
   document.body.classList.toggle('is-paused', s === 'paused');
   const st = $('#status-text');
@@ -867,6 +900,16 @@ $('#mic-cancel').addEventListener('click', () => {
   hideMicSheet();
   dropStream();                       // 회의를 안 하니 마이크를 놓아준다
 });
+
+$('#btn-hide').addEventListener('click', showBlackout);
+
+// 풀 때는 길게 눌러야 한다. 두 번 누르기로 하면 폰을 엎어두거나 스칠 때 풀린다.
+let holdTimer = null;
+const blk = $('#blackout');
+const holdStart = () => { clearTimeout(holdTimer); holdTimer = setTimeout(hideBlackout, 1000); };
+const holdEnd = () => clearTimeout(holdTimer);
+blk.addEventListener('pointerdown', holdStart);
+['pointerup', 'pointercancel', 'pointerleave'].forEach((e) => blk.addEventListener(e, holdEnd));
 
 $('#btn-lang').addEventListener('click', () => {
   if (app.state === 'rec' || app.state === 'paused') {
