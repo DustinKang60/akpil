@@ -1233,9 +1233,9 @@ async function finish() {
   clearDraft();
   setState('idle');
   openSave(rec);
-  // 회의가 끝나면 곧바로 정교화를 건다. 초안은 이미 저장돼 있으니
-  // 실패해도 잃을 것이 없고, 기다리지 않고 화면을 나가도 된다.
-  if (rec.audio) refineMeeting(rec);
+  // 정교화는 자동으로 걸지 않는다. 초안이 쓸 만한지는 화면을 보면 사람이 1초면
+  // 아는 일이라, 기계가 어림짐작해서 매번 100초씩 기다리게 할 이유가 없다.
+  // 정리 화면의 [회의록 재정리] 를 눌렀을 때만 돈다.
 }
 
 /* ─────────── 정리 화면 ─────────── */
@@ -1296,7 +1296,7 @@ function openSave(rec, from = 'screen-rec') {
   } else if (app.refining === rec.id) {
     setRefineUI('work', '회의록 정리중…');
   } else if (rec.audio) {
-    setRefineUI('bad', rec.fineErr ? '정리하지 못했습니다.' : '아직 정리하지 않았습니다.');
+    setRefineUI('bad', rec.fineErr ? '정리하지 못했습니다.' : '초안이 부족하면 눌러 주세요.');
   } else {
     $('#vbar').hidden = true;            // 녹음이 없으면 정교화할 것이 없다
   }
@@ -1463,7 +1463,7 @@ $('#btn-fine-del').addEventListener('click', async () => {
   rec.fineAt = null;
   await DB.put(rec);
   app.view = 'draft';
-  setRefineUI('bad', '아직 정리하지 않았습니다.');
+  setRefineUI('bad', '초안이 부족하면 눌러 주세요.');
   renderTranscript($('#review'), segsOf(rec), false);
   toast('정교본을 지웠습니다.', 2500);
 });
