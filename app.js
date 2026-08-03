@@ -135,6 +135,8 @@ const app = {
   tick: null,
   editing: false,
   current: null,          // 정리 화면에 열려 있는 회의 레코드
+  view: 'draft',          // 정리 화면에서 보고 있는 쪽 (fine | draft)
+  refining: null,         // 지금 정교화 중인 회의 id
 };
 
 const elapsedMs = () =>
@@ -1231,6 +1233,9 @@ async function finish() {
   clearDraft();
   setState('idle');
   openSave(rec);
+  // 회의가 끝나면 곧바로 정교화를 건다. 초안은 이미 저장돼 있으니
+  // 실패해도 잃을 것이 없고, 기다리지 않고 화면을 나가도 된다.
+  if (rec.audio) refineMeeting(rec);
 }
 
 /* ─────────── 정리 화면 ─────────── */
@@ -1283,7 +1288,19 @@ function openSave(rec, from = 'screen-rec') {
     player.hidden = true;
   }
 
-  renderTranscript($('#review'), rec.segments, false);
+  // 정교본이 있으면 그것부터 보여주고, 없으면 초안을 보여준다.
+  const has = !!(rec.fine && rec.fine.length);
+  app.view = has ? 'fine' : 'draft';
+  if (has) {
+    setRefineUI('tabs');
+  } else if (app.refining === rec.id) {
+    setRefineUI('work', '회의록 정리중…');
+  } else if (rec.audio) {
+    setRefineUI('bad', rec.fineErr ? '정리하지 못했습니다.' : '아직 정리하지 않았습니다.');
+  } else {
+    $('#vbar').hidden = true;            // 녹음이 없으면 정교화할 것이 없다
+  }
+  showVersion(app.view);
   showScreen('screen-save');
 }
 
@@ -1295,7 +1312,14 @@ async function patchCurrent() {
 }
 
 /* ─────────── 텍스트로 뽑기 ─────────── */
-function asText(rec) {
+// 지금 보고 있는 쪽의 문단. 보이는 것과 보내는 것이 같아야 헷갈리지 않는다.
+function segsOf(rec, view) {
+  const v = view || app.view;
+  return (v === 'fine' && rec && rec.fine && rec.fine.length) ? rec.fine : (rec ? rec.segments : []);
+}
+
+function asText(rec, view) {
+  const segs = segsOf(rec, view);
   const d = new Date(rec.date);
   const wd = '일월화수목금토'[d.getDay()];
   const head = [
@@ -1305,8 +1329,8 @@ function asText(rec) {
   ];
   if (rec.people) head.push(`참석자: ${rec.people}`);
 
-  const marks = rec.segments.filter((s) => s.mark);
-  const body = rec.segments.map((s) => {
+  const marks = segs.filter((s) => s.mark);
+  const body = segs.map((s) => {
     const badge = s.mark === 'mark' ? '★ ' : s.mark === 'todo' ? '☑ ' : '';
     const who = s.speaker ? ` ${s.speaker}` : '';
     return `${badge}[${clock(s.t)}]${who}\n${s.text}`;
@@ -1322,6 +1346,127 @@ function asText(rec) {
   out.push('— 악필 · 작은앱공방');
   return out.join('\n\n');
 }
+
+/* ─────────── 회의록 정리 (정교화) ─────────── */
+//
+// 회의 중 실시간 받아쓰기(nova-3)는 회의실 소리에 약하다. 실측에서 6.6분 회의를
+// 133자밖에 못 뽑았다. 같은 녹음을 whisper-large 로 다시 받아쓰면 3000자가 나온다.
+//
+// whisper 는 실시간(WebSocket)을 지원하지 않는다 — 스트리밍으로 열면 HTTP 405 로
+// 거절한다. 그래서 회의가 끝난 뒤 파일을 통째로 올리는 이 방식뿐이다.
+//
+// 화자 구분(diarize)은 켜지 않는다. 실측에서 97%를 한 사람으로 묶었다.
+// 잘못된 이름표가 붙은 회의록은 이름표가 없는 것보다 나쁘다.
+const DG_REST = 'https://api.deepgram.com/v1/listen';
+
+function refineQuery() {
+  return new URLSearchParams({
+    model: 'whisper-large',
+    language: SET.lang === 'en' ? 'en' : 'ko',
+    smart_format: 'true', punctuate: 'true', utterances: 'true',
+  }).toString();
+}
+
+// 딥그램 응답을 우리 문단 모양으로 바꾼다.
+function utterancesToSegs(body) {
+  const utts = (body.results && body.results.utterances) || [];
+  if (utts.length) {
+    return utts.map((u, i) => ({
+      id: 'f' + i, t: Math.round((u.start || 0) * 1000),
+      speaker: '', text: fixNumbers((u.transcript || '').trim()), mark: null,
+    })).filter((s) => s.text);
+  }
+  // utterances 가 없으면 통째로 한 문단이라도 건진다
+  const ch = body.results && body.results.channels && body.results.channels[0];
+  const txt = ch && ch.alternatives && ch.alternatives[0] && ch.alternatives[0].transcript;
+  return txt ? [{ id: 'f0', t: 0, speaker: '', text: fixNumbers(txt.trim()), mark: null }] : [];
+}
+
+function setRefineUI(mode, msg) {
+  const bar = $('#vbar'), tabs = $('#vtabs'), st = $('#vstate');
+  bar.hidden = false;
+  if (mode === 'tabs') { tabs.hidden = false; st.hidden = true; return; }
+  tabs.hidden = true; st.hidden = false;
+  st.className = 'vstate' + (mode === 'work' ? ' is-work' : mode === 'bad' ? ' is-bad' : '');
+  $('#vstate-text').textContent = msg;
+  $('#btn-refine').hidden = mode !== 'bad';
+}
+
+async function refineMeeting(rec) {
+  if (!rec || !rec.audio) return;
+  if (!dgKey()) { setRefineUI('bad', '받아쓰기 키가 없습니다.'); return; }
+  if (app.refining === rec.id) return;              // 이미 돌고 있다
+
+  app.refining = rec.id;
+  const mb = (rec.audio.size / 1e6).toFixed(1);
+  setRefineUI('work', `회의록 정리중… (${mb} MB)`);
+
+  try {
+    const res = await fetch(DG_REST + '?' + refineQuery(), {
+      method: 'POST',
+      headers: { Authorization: 'Token ' + dgKey(), 'Content-Type': rec.audio.type || 'audio/webm' },
+      body: rec.audio,
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const segs = utterancesToSegs(await res.json());
+    if (!segs.length) throw new Error('빈 결과');
+
+    rec.fine = segs;
+    rec.fineAt = new Date().toISOString();
+    rec.fineErr = null;
+    await DB.put(rec);
+    app.refining = null;
+
+    // 보고 있는 회의가 그대로면 정교본으로 바꿔 보여준다
+    if (app.current && app.current.id === rec.id) {
+      app.current = rec;
+      showVersion('fine');
+      toast('회의록 정리를 마쳤습니다.', 3000);
+    }
+  } catch (err) {
+    app.refining = null;
+    rec.fineErr = String((err && err.message) || err);
+    try { await DB.put(rec); } catch { /* 저장 못 해도 초안은 남아 있다 */ }
+    if (app.current && app.current.id === rec.id) {
+      setRefineUI('bad', '정리하지 못했습니다.');
+      $('#btn-refine').hidden = false;
+    }
+    console.warn('refine:', err);
+  }
+}
+
+// 어느 쪽을 보여줄지 정하고 화면을 갱신한다.
+function showVersion(v) {
+  const rec = app.current;
+  const has = !!(rec && rec.fine && rec.fine.length);
+  app.view = (v === 'fine' && has) ? 'fine' : 'draft';
+
+  document.querySelectorAll('#vtabs .vtab').forEach((b) => {
+    b.classList.toggle('is-on', b.dataset.v === app.view);
+    if (b.dataset.v === 'fine') b.disabled = !has;
+  });
+  if (has) setRefineUI('tabs');
+  renderTranscript($('#review'), segsOf(rec), false);
+}
+
+$('#vtabs').addEventListener('click', (e) => {
+  const b = e.target.closest('.vtab');
+  if (b && !b.disabled) showVersion(b.dataset.v);
+});
+$('#btn-refine').addEventListener('click', () => refineMeeting(app.current));
+
+$('#btn-fine-del').addEventListener('click', async () => {
+  const rec = app.current;
+  if (!rec || !rec.fine) return;
+  if (!confirm('정교본을 지울까요?\n회의 중 초안과 녹음은 그대로 남습니다.')) return;
+  rec.fine = null;
+  rec.fineAt = null;
+  await DB.put(rec);
+  app.view = 'draft';
+  setRefineUI('bad', '아직 정리하지 않았습니다.');
+  renderTranscript($('#review'), segsOf(rec), false);
+  toast('정교본을 지웠습니다.', 2500);
+});
 
 /* ─────────── 목록 ─────────── */
 async function openList() {
@@ -1352,7 +1497,9 @@ async function openList() {
       `${d.getFullYear()}. ${d.getMonth() + 1}. ${d.getDate()}. ` +
       `${pad(d.getHours())}:${pad(d.getMinutes())} · ${Math.max(1, Math.round(r.dur / 60000))}분 · ` +
       (segs ? `글 ${segs}문단` : '글 없음') + ' · ' +
-      (r.audio ? '녹음 있음' : '녹음 없음');
+      (r.audio ? '녹음 있음' : '녹음 없음') +
+      // 정교본이 있으면 알린다. 없는 회의는 목록에서 열어 다시 걸 수 있다.
+      (r.fine && r.fine.length ? ' · 정교본 있음' : '');
     main.append(h, p);
 
     // 참석자도 보여준다. 목록에서 "누가 있던 회의였나"로 찾는 일이 많다.

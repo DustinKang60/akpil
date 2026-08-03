@@ -371,6 +371,45 @@ body.is-rec .ctl-main{background:var(--rec);color:#2A0710}
 
 .foot{text-align:center;font-size:11px;color:#3C424F;margin:18px 0 4px}
 
+/* ── 정교본 / 초안 고르기 ── */
+.vbar{flex:none;margin-bottom:9px}
+.vtabs{display:flex;gap:6px}
+.vtab{
+  flex:1;padding:9px 10px;border-radius:var(--r-sm);
+  background:var(--surface-2);color:var(--text-3);
+  border:1px solid var(--line);font-size:13px;transition:.15s;
+}
+.vtab.is-on{background:var(--blue-bg);color:var(--blue);border-color:#2C4A6B}
+.vtab:disabled{opacity:.4}
+.vtab:not(:disabled):active{transform:scale(.98)}
+.vdel{
+  flex:none;width:36px;border-radius:var(--r-sm);
+  background:var(--surface-2);border:1px solid var(--line);
+  color:var(--text-3);display:grid;place-items:center;
+}
+.vdel .ic{width:15px;height:15px}
+.vdel:active{transform:scale(.96)}
+
+.vstate{
+  display:flex;align-items:center;justify-content:center;gap:10px;
+  background:var(--surface-2);border:1px solid var(--line);
+  border-radius:var(--r-sm);padding:10px 12px;
+  font-size:13px;color:var(--text-2);
+}
+.vstate.is-work #vstate-text{color:var(--neon)}
+.vstate.is-work #vstate-text::after{
+  content:'';display:inline-block;width:6px;height:6px;margin-left:7px;
+  border-radius:50%;background:var(--neon);vertical-align:middle;
+  animation:blip 1.2s ease-in-out infinite;
+}
+@keyframes blip{0%,100%{opacity:1}50%{opacity:.2}}
+.vstate.is-bad #vstate-text{color:var(--amber)}
+.vretry{
+  flex:none;padding:6px 12px;border-radius:20px;
+  background:var(--surface-3);color:var(--neon);font-size:12px;
+}
+.vretry:active{transform:scale(.96)}
+
 /* ── 공유 선택 시트 ── */
 .sheet-back{
   position:fixed;inset:0;z-index:60;
