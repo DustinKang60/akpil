@@ -1296,7 +1296,7 @@ function openSave(rec, from = 'screen-rec') {
   } else if (app.refining === rec.id) {
     setRefineUI('work', '회의록 정리중…');
   } else if (rec.audio) {
-    setRefineUI('bad', rec.fineErr ? '정리하지 못했습니다.' : '초안이 부족하면 눌러 주세요.');
+    setRefineUI('bad', rec.fineErr ? '정리하지 못했습니다.' : '조금 더 자세한 정리가 필요하면 클릭!');
   } else {
     $('#vbar').hidden = true;            // 녹음이 없으면 정교화할 것이 없다
   }
@@ -1470,7 +1470,7 @@ $('#btn-fine-del').addEventListener('click', async () => {
   rec.fineAt = null;
   await DB.put(rec);
   app.view = 'draft';
-  setRefineUI('bad', '초안이 부족하면 눌러 주세요.');
+  setRefineUI('bad', '조금 더 자세한 정리가 필요하면 클릭!');
   renderTranscript($('#review'), segsOf(rec), false);
   toast('재정리한 글을 지웠습니다.', 2500);
 });

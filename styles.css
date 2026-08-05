@@ -398,6 +398,8 @@ body.is-rec .ctl-main{background:var(--rec);color:#2A0710}
   border-radius:var(--r-sm);padding:10px 12px;
   font-size:13px;color:var(--text-2);
 }
+/* 문구와 버튼을 한 줄에 둔다. 문구가 길면 접히므로 말줄임으로 막는다 */
+#vstate-text{min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vstate.is-work #vstate-text{color:var(--neon)}
 .vstate.is-work #vstate-text::after{
   content:'';display:inline-block;width:6px;height:6px;margin-left:7px;
