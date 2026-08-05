@@ -1458,14 +1458,14 @@ $('#btn-refine').addEventListener('click', () => refineMeeting(app.current));
 $('#btn-fine-del').addEventListener('click', async () => {
   const rec = app.current;
   if (!rec || !rec.fine) return;
-  if (!confirm('정교본을 지울까요?\n회의 중 초안과 녹음은 그대로 남습니다.')) return;
+  if (!confirm('재정리한 글을 지울까요?\n회의 중 초안과 녹음은 그대로 남습니다.')) return;
   rec.fine = null;
   rec.fineAt = null;
   await DB.put(rec);
   app.view = 'draft';
   setRefineUI('bad', '초안이 부족하면 눌러 주세요.');
   renderTranscript($('#review'), segsOf(rec), false);
-  toast('정교본을 지웠습니다.', 2500);
+  toast('재정리한 글을 지웠습니다.', 2500);
 });
 
 /* ─────────── 목록 ─────────── */
@@ -1499,7 +1499,7 @@ async function openList() {
       (segs ? `글 ${segs}문단` : '글 없음') + ' · ' +
       (r.audio ? '녹음 있음' : '녹음 없음') +
       // 정교본이 있으면 알린다. 없는 회의는 목록에서 열어 다시 걸 수 있다.
-      (r.fine && r.fine.length ? ' · 정교본 있음' : '');
+      (r.fine && r.fine.length ? ' · 재정리함' : '');
     main.append(h, p);
 
     // 참석자도 보여준다. 목록에서 "누가 있던 회의였나"로 찾는 일이 많다.

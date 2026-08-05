@@ -375,9 +375,11 @@ body.is-rec .ctl-main{background:var(--rec);color:#2A0710}
 .vbar{flex:none;margin-bottom:9px}
 .vtabs{display:flex;gap:6px}
 .vtab{
-  flex:1;padding:9px 10px;border-radius:var(--r-sm);
+  flex:1;min-width:0;padding:9px 8px;border-radius:var(--r-sm);
   background:var(--surface-2);color:var(--text-3);
   border:1px solid var(--line);font-size:13px;transition:.15s;
+  /* 더 좁은 폰이나 큰 글씨 설정에서도 두 줄로 접히지 않게 못을 박는다 */
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
 }
 .vtab.is-on{background:var(--blue-bg);color:var(--blue);border-color:#2C4A6B}
 .vtab:disabled{opacity:.4}
