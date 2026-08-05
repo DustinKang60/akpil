@@ -444,6 +444,14 @@ body.is-rec .ctl-main{background:var(--rec);color:#2A0710}
 .sheet-item span{display:flex;flex-direction:column;min-width:0}
 .sheet-item b{font-weight:500;font-size:15px}
 .sheet-item small{font-size:12px;color:var(--text-3);margin-top:2px}
+/* 고른 문단의 글 — 어느 것을 골랐는지 확인용이라 한 줄만 보여준다 */
+.seg-peek{
+  margin:0 4px 10px;padding:9px 12px;
+  background:var(--surface-3);border-radius:var(--r-sm);
+  font-size:13px;color:var(--text-2);line-height:1.5;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+
 .sheet-cancel{
   width:100%;margin-top:6px;padding:14px;border-radius:var(--r-sm);
   color:var(--text-2);font-size:15px;background:var(--surface-3);

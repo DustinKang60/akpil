@@ -1329,20 +1329,27 @@ function asText(rec, view) {
   ];
   if (rec.people) head.push(`참석자: ${rec.people}`);
 
+  // 화면에서 [중요] [할일] 딱지로 보이니 내보내는 글도 같게 쓴다.
+  // ★ ☑ 는 기기·앱마다 다르게 보이고 뜻도 바로 안 읽힌다.
+  // 대괄호는 딱지에만 쓰고 시각은 그냥 둔다 — 화면과 같은 모양이다.
   const marks = segs.filter((s) => s.mark);
+  const tagOf = (m) => (m === 'mark' ? '[중요] ' : m === 'todo' ? '[할일] ' : '');
   const body = segs.map((s) => {
-    const badge = s.mark === 'mark' ? '★ ' : s.mark === 'todo' ? '☑ ' : '';
     const who = s.speaker ? ` ${s.speaker}` : '';
-    return `${badge}[${clock(s.t)}]${who}\n${s.text}`;
+    return `${tagOf(s.mark)}${clock(s.t)}${who}\n${s.text}`;
   });
 
   // 가로 구분선(─)은 카톡·메일에서 폭을 못 채워 줄이 깨져 지저분하다.
   // 빈 줄과 소제목(■)만으로 구분한다.
+  // 맨 아래 묶음은 중요와 할일을 나눈다. "무엇이 정해졌나" 와 "누가 무엇을
+  // 해야 하나" 는 성격이 다르고, 회의가 끝나고 실제로 찾아보는 것은 대개 뒤쪽이다.
   const out = [head.join('\n'), body.join('\n\n')];
-  if (marks.length) {
-    out.push('■ 중요 · 할일',
-      marks.map((s) => `${s.mark === 'todo' ? '☑' : '★'} [${clock(s.t)}] ${s.text}`).join('\n'));
-  }
+  const pick = (kind) => marks.filter((s) => s.mark === kind)
+    .map((s) => `${clock(s.t)}  ${s.text}`).join('\n');
+  const important = pick('mark');
+  const todos = pick('todo');
+  if (important) out.push('■ 중요', important);
+  if (todos) out.push('■ 할일', todos);
   out.push('— 악필 · 작은앱공방');
   return out.join('\n\n');
 }
@@ -1609,12 +1616,53 @@ $('#in-title').addEventListener('change', patchCurrent);
 $('#in-people').addEventListener('change', patchCurrent);
 
 // 문장을 누르면 녹음의 그 지점으로 건너뛴다
+/* ── 문단 표시 시트 ── */
+// 회의가 끝난 뒤 받아쓴 글을 읽으며 "이건 결정, 이건 할 일" 을 짚는 것이
+// 회의록 정리의 본질이다. 회의 중 버튼은 마지막 문단에만 붙고 재정리한 글에는
+// 아예 못 쓰므로, 정리 화면에서 아무 문단이나 눌러 표시할 수 있어야 한다.
+let segPick = null;                       // 지금 고른 문단 id
+
+function openSegSheet(id) {
+  const seg = segsOf(app.current).find((s) => s.id === id);
+  if (!seg) return;
+  segPick = id;
+  $('#seg-peek').textContent = seg.text;
+  $('#seg-clear').hidden = !seg.mark;      // 표시가 없으면 지울 것도 없다
+  $('#seg-play').hidden = $('#player').hidden;
+  $('#seg-sheet').hidden = false;
+}
+const closeSegSheet = () => { $('#seg-sheet').hidden = true; segPick = null; };
+
+async function setSegMark(kind) {
+  const rec = app.current;
+  const seg = segsOf(rec).find((s) => s.id === segPick);
+  if (!rec || !seg) return closeSegSheet();
+  seg.mark = kind;
+  await DB.put(rec);
+  closeSegSheet();
+  renderTranscript($('#review'), segsOf(rec), false);
+  toast(kind === 'mark' ? '[중요]로 표시했습니다.'
+      : kind === 'todo' ? '[할일]로 표시했습니다.' : '표시를 지웠습니다.', 2200);
+}
+
 $('#review').addEventListener('click', (e) => {
   const seg = e.target.closest('.seg');
+  if (seg) openSegSheet(seg.dataset.id);
+});
+$('#seg-mark').addEventListener('click', () => setSegMark('mark'));
+$('#seg-todo').addEventListener('click', () => setSegMark('todo'));
+$('#seg-clear').addEventListener('click', () => setSegMark(null));
+$('#seg-play').addEventListener('click', () => {
+  const seg = segsOf(app.current).find((s) => s.id === segPick);
   const player = $('#player');
+  closeSegSheet();
   if (!seg || player.hidden) return;
-  player.currentTime = Number(seg.dataset.t) / 1000;
+  player.currentTime = seg.t / 1000;
   player.play().catch(() => {});
+});
+$('#seg-cancel').addEventListener('click', closeSegSheet);
+$('#seg-sheet').addEventListener('click', (e) => {
+  if (e.target.id === 'seg-sheet') closeSegSheet();
 });
 
 $('#btn-copy').addEventListener('click', async () => {

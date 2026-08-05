@@ -299,6 +299,31 @@
   </div>
 </div>
 
+<!-- 문단 표시 (정리 화면에서 문단을 탭하면) -->
+<div class="sheet-back" id="seg-sheet" hidden>
+  <div class="sheet" role="dialog" aria-labelledby="seg-sheet-title">
+    <p class="sheet-title" id="seg-sheet-title">이 문단을</p>
+    <p class="seg-peek" id="seg-peek"></p>
+    <button type="button" class="sheet-item" id="seg-mark">
+      <svg viewBox="0 0 24 24" class="ic"><path d="m12 3 2.9 5.9 6.5.9-4.7 4.6 1.1 6.5L12 17.8 6.2 20.9l1.1-6.5L2.6 9.8l6.5-.9L12 3z"/></svg>
+      <span><b>[중요]로 표시</b><small>결정된 것·짚어둘 것</small></span>
+    </button>
+    <button type="button" class="sheet-item" id="seg-todo">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      <span><b>[할일]로 표시</b><small>누가 무엇을 해야 하나</small></span>
+    </button>
+    <button type="button" class="sheet-item" id="seg-play">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M5 3l14 9-14 9V3z"/></svg>
+      <span><b>여기서부터 듣기</b><small>녹음의 그 지점으로</small></span>
+    </button>
+    <button type="button" class="sheet-item" id="seg-clear">
+      <svg viewBox="0 0 24 24" class="ic"><path d="M18 6 6 18M6 6l12 12"/></svg>
+      <span><b>표시 지우기</b></span>
+    </button>
+    <button type="button" class="sheet-cancel" id="seg-cancel">취소</button>
+  </div>
+</div>
+
 <!-- 화면 유지를 걸지 못했을 때 (앱을 켤 때 한 번만 본다) -->
 <div class="sheet-back" id="wake-sheet" hidden>
   <div class="sheet" role="alertdialog" aria-labelledby="wake-sheet-title">
